@@ -56,38 +56,42 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err)
 	}
+	l := log.With().Int64("taskNum", config.taskNum).Logger()
 	ctx := context.Background()
 
 	db, err := firestore.NewClient(ctx, projectID)
 	if err != nil {
-		log.Fatal().Err(err).Msgf("Failed to create client: %v", err)
+		l.Fatal().Err(err).Msgf("Failed to create client: %v", err)
 	}
 
 	snapshot, err := db.Collection(ConfigurationCollection).Doc(DestinyDocument).Get(ctx)
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to get db information")
+		l.Fatal().Err(err).Msg("failed to get db information")
 	}
 
 	var data Configuration
 	err = snapshot.DataTo(&data)
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to read into configuration")
+		l.Fatal().Err(err).Msg("failed to read into configuration")
 	}
 	currentVersion, ok := GetVersionByIndex(data, config.taskNum)
 	if !ok {
-		log.Info().Msg("No matching version found")
-		return
+		l.Fatal().Msg("unknown index for version")
 	}
-	log.Debug().Int64("taskNum", config.taskNum).Msgf("Configuration Version by Task: %s\n", currentVersion)
+	table, ok := GetConfigKeyByIndex(config.taskNum)
+	if !ok {
+		log.Fatal().Msg("unknown task index")
+	}
+	l = l.With().Str("table", table).Str("lastVersion", currentVersion).Logger()
 
 	manifestResponse, err := requestManifestInformation(ctx)
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to get manifest from bungie")
+		l.Fatal().Err(err).Msg("failed to get manifest from bungie")
 	}
 
 	version := manifestResponse.Response.Version
 	if version == currentVersion {
-		log.Info().Msg("data is up to date")
+		l.Info().Msg("data is up to date")
 		return
 	}
 
@@ -96,7 +100,7 @@ func main() {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to create request")
+		l.Fatal().Err(err).Msg("failed to create request")
 	}
 
 	// Add headers that might be necessary for the request
@@ -107,37 +111,36 @@ func main() {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to download file:")
+		l.Fatal().Err(err).Msg("failed to download file:")
 	}
 	defer resp.Body.Close()
 
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
-		log.Fatal().Msgf("bad response status: %s (code: %d)", resp.Status, resp.StatusCode)
+		l.Fatal().Msgf("bad response status: %s (code: %d)", resp.Status, resp.StatusCode)
 	}
 
-	log.Info().
+	l.Info().
 		Str("url", manifestURL).
 		Msg("downloaded file from source")
 	var manifest Manifest
 	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
-		log.Fatal().Err(err).Msg("failed to decode manifest data")
+		l.Fatal().Err(err).Msg("failed to decode manifest data")
 	}
 
-	log.Debug().Int64("index", config.taskNum).Msg("Decoded JSON successfully")
+	l.Debug().Msg("Decoded JSON successfully")
 
 	err = performMigration(ctx, db, manifest, config.taskNum)
 	if err != nil {
-		log.Fatal().Int64("taskNum", config.taskNum).Err(err).Msg("failed to perform migration")
+		l.Fatal().Err(err).Msg("failed to perform migration")
 	}
-	table, ok := GetConfigKeyByIndex(config.taskNum)
-	if !ok {
-		log.Fatal().Msg("unknown task index")
-	}
-	err = updateManifestVersion(ctx, db, table, currentVersion)
+	l.Info().Msg("migration completed")
+	err = updateManifestVersion(ctx, db, table, version)
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to update version")
+		l.Fatal().Err(err).Msg("failed to update version")
 	}
+	l.Info().Msg("updated version")
+	l.Info().Msg("work done")
 }
 
 func requestManifestInformation(ctx context.Context) (*ManifestResponse, error) {
@@ -427,29 +430,29 @@ func performMigration(ctx context.Context, db *firestore.Client, manifest Manife
 func GetConfigKeyByIndex(index int64) (string, bool) {
 	switch index {
 	case 0:
-		return "InventoryBucketVersion", true
+		return "inventoryBucketVersion", true
 	case 1:
-		return "ClassVersion", true
+		return "classVersion", true
 	case 2:
-		return "PlaceVersion", true
+		return "placeVersion", true
 	case 3:
-		return "DamageVersion", true
+		return "damageVersion", true
 	case 4:
-		return "ActivityModeVersion", true
+		return "activityModeVersion", true
 	case 5:
-		return "ActivityVersion", true
+		return "activityVersion", true
 	case 6:
-		return "ItemCategoryVersion", true
+		return "itemCategoryVersion", true
 	case 7:
-		return "ItemDefinitionVersion", true
+		return "itemDefinitionVersion", true
 	case 8:
-		return "StatDefinitionVersion", true
+		return "statDefinitionVersion", true
 	case 9:
-		return "RaceVersion", true
+		return "raceVersion", true
 	case 10:
-		return "SandboxPerkVersion", true
+		return "sandboxPerkVersion", true
 	case 11:
-		return "RecordDefinitionVersion", true
+		return "recordDefinitionVersion", true
 	default:
 		return "", false
 	}
