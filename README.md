@@ -6,7 +6,7 @@ Deploying it
     gcloud run jobs deploy migration \
         --source . \
         --tasks 14 \
-        --task-timeout 15m \
+        --task-timeout 30m \
         --memory 2Gi \
         --cpu 1 \
         --max-retries 5 \
