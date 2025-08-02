@@ -5,11 +5,11 @@ Deploying it
 ```shell
     gcloud run jobs deploy migration \
         --source . \
-        --tasks 14 \
+        --tasks 12 \
         --task-timeout 30m \
         --memory 2Gi \
         --cpu 1 \
-        --max-retries 5 \
+        --max-retries 3 \
         --region us-central1 \
         --project=gruntt-destiny
 ```
