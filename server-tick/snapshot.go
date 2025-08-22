@@ -22,15 +22,16 @@ const (
 func Save(ctx context.Context, db *firestore.Client, client *bungie.ClientWithResponses, userID, membershipID, characterID string) (*CharacterSnapshot, error) {
 	data, err := generateSnapshot(ctx, db, client, userID, membershipID, characterID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build data: %w", err)
+		return nil, fmt.Errorf("failed to build data: %v", err)
 	}
 	if data == nil {
 		return nil, fmt.Errorf("failed to generate snapshot")
 	}
-	_, err = create(ctx, db, userID, *data)
+	id, err := create(ctx, db, userID, *data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create snapshot: %w", err)
 	}
+	data.ID = *id
 	return data, nil
 }
 func generateSnapshot(ctx context.Context, db *firestore.Client, client *bungie.ClientWithResponses, userID, membershipID, characterID string) (*CharacterSnapshot, error) {
@@ -76,6 +77,7 @@ func create(ctx context.Context, db *firestore.Client, userID string, snapshot C
 		return nil, err
 	}
 	if existingSnapshot != nil {
+		log.Info().Msg("Creating a history entry")
 		return createHistoryEntry(ctx, db, *existingSnapshot)
 	}
 
@@ -89,9 +91,11 @@ func create(ctx context.Context, db *firestore.Client, userID string, snapshot C
 	ref := db.Collection(snapshotCollection).NewDoc()
 	snapshot.ID = ref.ID
 	_, err = ref.Set(ctx, snapshot)
+	log.Info().Msg("Created original snapshot")
 	if err != nil {
 		return nil, err
 	}
+	log.Info().Msg("Creating a history entry for original snapshot")
 	return createHistoryEntry(ctx, db, snapshot)
 }
 
@@ -144,7 +148,7 @@ func FindBestFit(ctx context.Context, db *firestore.Client, userID string, chara
 
 	minTime := activityPeriod.Add(time.Duration(-12) * time.Hour)
 	// A game can last about 8 minutes over the starting time
-	maxTime := activityPeriod.Add(time.Duration(10) * time.Minute)
+	maxTime := activityPeriod.Add(time.Duration(15) * time.Minute)
 	l := slog.With(
 		"activityPeriod", activityPeriod,
 		"minTime", minTime,

@@ -100,7 +100,7 @@ func main() {
 
 		ll.Info().Msg("starting to save loadout")
 		startTime := time.Now()
-		_, err = Save(ctx, db, cli, session.UserID, membershipID, session.ID)
+		_, err = Save(ctx, db, cli, session.UserID, membershipID, session.CharacterID)
 		if err != nil {
 			ll.Warn().Err(err).Msg("failed to save loadout")
 			continue
@@ -128,7 +128,7 @@ func main() {
 		}
 		ll.Info().
 			TimeDiff("pvpDuration", time.Now(), startTime).
-			Msg("got pvp games")
+			Msg("got pvp response")
 
 		if len(activityHistories) == 0 {
 			ll.Warn().Msg("[SKIP]: no history found for user")
@@ -154,8 +154,9 @@ func main() {
 		IDs := make([]string, 0)
 		histories := make([]ActivityHistory, 0)
 		// Only choose activities that happened after starting the session
+		gracePeriod := session.StartedAt.Add(-15 * time.Minute)
 		for _, activity := range activityHistories {
-			if activity.Period.Compare(session.StartedAt) == 1 {
+			if activity.Period.After(gracePeriod) {
 				IDs = append(IDs, activity.InstanceID)
 				histories = append(histories, activity)
 			}

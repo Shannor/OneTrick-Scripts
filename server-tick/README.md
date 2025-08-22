@@ -9,6 +9,7 @@ Deploying it
         --memory 1Gi \
         --cpu 1 \
         --max-retries 2 \
+        --set-secrets D2_API_KEY=D2_API_KEY:latest \
         --region us-central1 \
         --project=gruntt-destiny
 ```
