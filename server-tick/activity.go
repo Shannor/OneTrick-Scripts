@@ -48,19 +48,56 @@ func GetAllPVP(ctx context.Context, client *bungie.ClientWithResponses, db *fire
 		return nil, fmt.Errorf("no response found")
 	}
 	if resp.JSON200.Response.Activities == nil {
-		return nil, fmt.Errorf("no activities found")
+		return nil, fmt.Errorf("no definitions found")
 	}
 
-	activities, err := GetActivities(ctx, db)
-	if err != nil {
-		return nil, fmt.Errorf("cannot enhance activities: %v", err)
-	}
-	modes, err := GetActivityModes(ctx, db)
-	if err != nil {
-		return nil, fmt.Errorf("cannot enhance activities: %v", err)
+	source := *resp.JSON200.Response.Activities
+	var (
+		hashes         = make([]int64, 0)
+		directorHashes = make([]int64, 0)
+		modeIDs        = make(map[int64]bool)
+	)
+	for _, period := range source {
+		hashes = append(hashes, int64(*period.ActivityDetails.ReferenceId))
+		directorHashes = append(directorHashes, int64(*period.ActivityDetails.DirectorActivityHash))
 	}
 
-	return TransformPeriodGroups(*resp.JSON200.Response.Activities, activities, modes), nil
+	definitions, err := GetActivitiesByIDs(ctx, db, hashes)
+	if err != nil {
+		return nil, err
+	}
+	directorDefinitions, err := GetActivitiesByIDs(ctx, db, directorHashes)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, definition := range directorDefinitions {
+		modeIDs[int64(definition.DirectActivityModeHash)] = true
+	}
+	var ids []int64
+	for ID := range modeIDs {
+		ids = append(ids, ID)
+	}
+
+	modes, err := GetActivityModesByIDs(ctx, db, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	return TransformPeriodGroups(*resp.JSON200.Response.Activities, definitions, directorDefinitions, modes), nil
+}
+
+func getActivityDefinitions(ctx context.Context, db *firestore.Client, hashes []int64) (map[string]ActivityDefinition, error) {
+	result := make(map[string]ActivityDefinition)
+	for _, hash := range hashes {
+		definition, err := GetActivity(ctx, db, hash)
+		if err != nil {
+			log.Error().Err(err).Msg("didn't find a matching hash")
+			continue
+		}
+		result[strconv.FormatInt(hash, 10)] = *definition
+	}
+	return result, nil
 }
 
 type ActivityHistory struct {

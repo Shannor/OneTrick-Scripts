@@ -659,6 +659,23 @@ func GetActivities(ctx context.Context, db *firestore.Client) (map[string]Activi
 	})
 }
 
+// GetActivity retrieves a single activity definition from the manifest by its hash
+func GetActivity(ctx context.Context, db *firestore.Client, hash int64) (*ActivityDefinition, error) {
+	hashStr := strconv.FormatInt(hash, 10)
+
+	doc, err := db.Collection(string(ActivityCollection)).Doc(hashStr).Get(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get activity definition: %w", err)
+	}
+
+	var result ActivityDefinition
+	if err := doc.DataTo(&result); err != nil {
+		return nil, fmt.Errorf("failed to convert activity definition: %w", err)
+	}
+
+	return &result, nil
+}
+
 func GetActivityModes(ctx context.Context, db *firestore.Client) (map[string]ActivityModeDefinition, error) {
 	docs, err := db.Collection(string(ActivityModeCollection)).Documents(ctx).GetAll()
 	if err != nil {
@@ -671,6 +688,23 @@ func GetActivityModes(ctx context.Context, db *firestore.Client) (map[string]Act
 	return utils.ToMap[ActivityModeDefinition, string](results, func(t ActivityModeDefinition) string {
 		return strconv.FormatInt(t.Hash, 10)
 	})
+}
+
+// GetActivityMode retrieves a single activity mode definition from the manifest by its hash
+func GetActivityMode(ctx context.Context, db *firestore.Client, hash int64) (*ActivityModeDefinition, error) {
+	hashStr := strconv.FormatInt(hash, 10)
+
+	doc, err := db.Collection(string(ActivityModeCollection)).Doc(hashStr).Get(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get activity mode definition: %w", err)
+	}
+
+	var result ActivityModeDefinition
+	if err := doc.DataTo(&result); err != nil {
+		return nil, fmt.Errorf("failed to convert activity mode definition: %w", err)
+	}
+
+	return &result, nil
 }
 
 func GetStats(ctx context.Context, db *firestore.Client) (map[string]StatDefinition, error) {
@@ -760,6 +794,111 @@ func GetDamageTypes(ctx context.Context, db *firestore.Client) (map[string]Damag
 	return utils.ToMap[DamageType, string](results, func(t DamageType) string {
 		return strconv.FormatInt(t.Hash, 10)
 	})
+}
+
+// batchedFetch is an internal helper to fetch documents by string IDs in batches of up to 30.
+func batchedFetch[T any](ctx context.Context, db *firestore.Client, collection ManifestCollection, idStrs []string) ([]T, error) {
+	const maxBatch = 30
+	var out []T
+	for i := 0; i < len(idStrs); i += maxBatch {
+		end := i + maxBatch
+		if end > len(idStrs) {
+			end = len(idStrs)
+		}
+		batch := idStrs[i:end]
+		refs := make([]*firestore.DocumentRef, 0, len(batch))
+		for _, id := range batch {
+			refs = append(refs, db.Collection(string(collection)).Doc(id))
+		}
+		docs, err := db.GetAll(ctx, refs)
+		if err != nil {
+			return nil, err
+		}
+		items, err := utils.GetAllToStructs[T](docs)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, items...)
+	}
+	return out, nil
+}
+
+// GetActivitiesByIDs returns a map of activity definitions for the given hashes. Max 30 per batch.
+func GetActivitiesByIDs(ctx context.Context, db *firestore.Client, ids []int64) (map[string]ActivityDefinition, error) {
+	idStrs := make([]string, 0, len(ids))
+	for _, id := range ids {
+		idStrs = append(idStrs, strconv.FormatInt(id, 10))
+	}
+	items, err := batchedFetch[ActivityDefinition](ctx, db, ActivityCollection, idStrs)
+	if err != nil {
+		return nil, err
+	}
+	return utils.ToMap[ActivityDefinition, string](items, func(t ActivityDefinition) string { return strconv.FormatInt(int64(t.Hash), 10) })
+}
+
+// GetActivityModesByIDs returns a map of activity mode definitions for the given hashes. Max 30 per batch.
+func GetActivityModesByIDs(ctx context.Context, db *firestore.Client, ids []int64) (map[string]ActivityModeDefinition, error) {
+	idStrs := make([]string, 0, len(ids))
+	for _, id := range ids {
+		idStrs = append(idStrs, strconv.FormatInt(id, 10))
+	}
+	items, err := batchedFetch[ActivityModeDefinition](ctx, db, ActivityModeCollection, idStrs)
+	if err != nil {
+		return nil, err
+	}
+	return utils.ToMap[ActivityModeDefinition, string](items, func(t ActivityModeDefinition) string { return strconv.FormatInt(t.Hash, 10) })
+}
+
+// GetStatsByIDs returns a map of stat definitions for the given hashes. Max 30 per batch.
+func GetStatsByIDs(ctx context.Context, db *firestore.Client, ids []int64) (map[string]StatDefinition, error) {
+	idStrs := make([]string, 0, len(ids))
+	for _, id := range ids {
+		idStrs = append(idStrs, strconv.FormatInt(id, 10))
+	}
+	items, err := batchedFetch[StatDefinition](ctx, db, StatDefinitionCollection, idStrs)
+	if err != nil {
+		return nil, err
+	}
+	return utils.ToMap[StatDefinition, string](items, func(t StatDefinition) string { return strconv.FormatInt(t.Hash, 10) })
+}
+
+// GetItemsByIDs returns a map of item definitions for the given hashes. Max 30 per batch.
+func GetItemsByIDs(ctx context.Context, db *firestore.Client, ids []int64) (map[string]ItemDefinition, error) {
+	idStrs := make([]string, 0, len(ids))
+	for _, id := range ids {
+		idStrs = append(idStrs, strconv.FormatInt(id, 10))
+	}
+	items, err := batchedFetch[ItemDefinition](ctx, db, ItemDefinitionCollection, idStrs)
+	if err != nil {
+		return nil, err
+	}
+	return utils.ToMap[ItemDefinition, string](items, func(t ItemDefinition) string { return strconv.FormatInt(t.Hash, 10) })
+}
+
+// GetPerksByIDs returns a map of perk definitions for the given hashes. Max 30 per batch.
+func GetPerksByIDs(ctx context.Context, db *firestore.Client, ids []int64) (map[string]PerkDefinition, error) {
+	idStrs := make([]string, 0, len(ids))
+	for _, id := range ids {
+		idStrs = append(idStrs, strconv.FormatInt(id, 10))
+	}
+	items, err := batchedFetch[PerkDefinition](ctx, db, SandboxPerkCollection, idStrs)
+	if err != nil {
+		return nil, err
+	}
+	return utils.ToMap[PerkDefinition, string](items, func(t PerkDefinition) string { return strconv.FormatInt(t.Hash, 10) })
+}
+
+// GetDamageTypesByIDs returns a map of damage types for the given hashes. Max 30 per batch.
+func GetDamageTypesByIDs(ctx context.Context, db *firestore.Client, ids []int64) (map[string]DamageType, error) {
+	idStrs := make([]string, 0, len(ids))
+	for _, id := range ids {
+		idStrs = append(idStrs, strconv.FormatInt(id, 10))
+	}
+	items, err := batchedFetch[DamageType](ctx, db, DamageCollection, idStrs)
+	if err != nil {
+		return nil, err
+	}
+	return utils.ToMap[DamageType, string](items, func(t DamageType) string { return strconv.FormatInt(t.Hash, 10) })
 }
 
 func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.ClientWithResponses, membershipID int64, membershipType int64, items []bungie.ItemComponent, stats map[string]StatDefinition) (Loadout, error) {

@@ -228,13 +228,13 @@ func TransformHistoricActivity(history *bungie.HistoricalStatsActivity, activity
 	}
 }
 
-func TransformPeriodGroups(period []bungie.StatsPeriodGroup, activities map[string]ActivityDefinition, modes map[string]ActivityModeDefinition) []ActivityHistory {
+func TransformPeriodGroups(period []bungie.StatsPeriodGroup, activities map[string]ActivityDefinition, directorDefinitions map[string]ActivityDefinition, modes map[string]ActivityModeDefinition) []ActivityHistory {
 	if period == nil {
 		return nil
 	}
 	var result []ActivityHistory
 	for _, group := range period {
-		r := TransformPeriodGroup(&group, activities, modes)
+		r := TransformPeriodGroup(&group, activities, directorDefinitions, modes)
 		if r == nil {
 			log.Warn().Msg("period group returned nil")
 			continue
@@ -244,7 +244,7 @@ func TransformPeriodGroups(period []bungie.StatsPeriodGroup, activities map[stri
 	return result
 }
 
-func TransformPeriodGroup(period *bungie.StatsPeriodGroup, activities map[string]ActivityDefinition, modes map[string]ActivityModeDefinition) *ActivityHistory {
+func TransformPeriodGroup(period *bungie.StatsPeriodGroup, activities map[string]ActivityDefinition, directorDefintions map[string]ActivityDefinition, modes map[string]ActivityModeDefinition) *ActivityHistory {
 	if period == nil {
 		return nil
 	}
@@ -254,12 +254,12 @@ func TransformPeriodGroup(period *bungie.StatsPeriodGroup, activities map[string
 		log.Warn().Msgf("Activity locale not found in manifest: %d ", period.ActivityDetails.ReferenceId)
 		return nil
 	}
-	activity, ok := activities[strconv.Itoa(int(*period.ActivityDetails.DirectorActivityHash))]
+	directorDefinition, ok := directorDefintions[strconv.Itoa(int(*period.ActivityDetails.DirectorActivityHash))]
 	if !ok {
 		log.Warn().Msgf("Activity Directory not found in manifest: %d", period.ActivityDetails.DirectorActivityHash)
 		return nil
 	}
-	activityMode := modes[strconv.Itoa(activity.DirectActivityModeHash)]
+	activityMode := modes[strconv.Itoa(directorDefinition.DirectActivityModeHash)]
 	mode := ActivityModeTypeToString((*bungie.CurrentActivityModeType)(period.ActivityDetails.Mode))
 	return &ActivityHistory{
 		ActivityHash: *uintToInt64(period.ActivityDetails.DirectorActivityHash),
@@ -269,7 +269,7 @@ func TransformPeriodGroup(period *bungie.StatsPeriodGroup, activities map[string
 		ReferenceID:  *uintToInt64(period.ActivityDetails.ReferenceId),
 		Location:     definition.DisplayProperties.Name,
 		Description:  definition.DisplayProperties.Description,
-		Activity:     activity.DisplayProperties.Name,
+		Activity:     directorDefinition.DisplayProperties.Name,
 		ImageURL:     setBaseBungieURL(&definition.PgcrImage),
 		ActivityIcon: setBaseBungieURL(&activityMode.DisplayProperties.Icon),
 		Period:       *period.Period,
