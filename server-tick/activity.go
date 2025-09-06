@@ -87,19 +87,6 @@ func GetAllPVP(ctx context.Context, client *bungie.ClientWithResponses, db *fire
 	return TransformPeriodGroups(*resp.JSON200.Response.Activities, definitions, directorDefinitions, modes), nil
 }
 
-func getActivityDefinitions(ctx context.Context, db *firestore.Client, hashes []int64) (map[string]ActivityDefinition, error) {
-	result := make(map[string]ActivityDefinition)
-	for _, hash := range hashes {
-		definition, err := GetActivity(ctx, db, hash)
-		if err != nil {
-			log.Error().Err(err).Msg("didn't find a matching hash")
-			continue
-		}
-		result[strconv.FormatInt(hash, 10)] = *definition
-	}
-	return result, nil
-}
-
 type ActivityHistory struct {
 	Activity string `firestore:"activity" json:"activity"`
 
