@@ -902,9 +902,64 @@ func GetDamageTypesByIDs(ctx context.Context, db *firestore.Client, ids []int64)
 }
 
 func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.ClientWithResponses, membershipID int64, membershipType int64, items []bungie.ItemComponent, stats map[string]StatDefinition) (Loadout, error) {
+	loadout := make(Loadout)
+	destinyItems := make(map[string]bungie.DestinyItem)
 
-	// TODO: Could convert this to build items by ID requests, only need the names
-	d2Items, err := GetItems(ctx, db)
+	l := log.With().Int64("membershipId", membershipID).Logger()
+	for _, item := range items {
+		if item.ItemInstanceId == nil {
+			l.Warn().Msgf("no instance id found")
+			continue
+		}
+		d, err := GetItemDetails(ctx, client, membershipID, membershipType, *item.ItemInstanceId)
+		if err != nil {
+			l.Error().Err(err).Msgf("failed to get item from API")
+			continue
+		}
+		if d == nil {
+			l.Warn().Msgf("destiny item was nil")
+			continue
+		}
+		destinyItems[*item.ItemInstanceId] = *d
+	}
+
+	var (
+		// Has Items and Sockets
+		itemHashes []int64
+		perkHashes []int64
+	)
+
+	l.Debug().Msg("build the list of hashes")
+	for instanceID, item := range destinyItems {
+		// Base Item Hash
+		itemID, err := strconv.ParseInt(instanceID, 10, 64)
+		if err != nil {
+			l.Warn().Msg("failed to convert instance ID")
+			continue
+		}
+		itemHashes = append(itemHashes, itemID)
+		if item.Sockets != nil && item.Sockets.Data != nil && item.Sockets.Data.Sockets != nil {
+			for _, s := range *item.Sockets.Data.Sockets {
+				if s.PlugHash != nil {
+					itemHashes = append(itemHashes, int64(*s.PlugHash))
+				}
+			}
+		}
+		if item.Perks != nil && item.Perks.Data != nil && item.Perks.Data.Perks != nil {
+			for _, p := range *item.Perks.Data.Perks {
+				if p.PerkHash != nil {
+					perkHashes = append(perkHashes, int64(*p.PerkHash))
+				}
+			}
+		}
+	}
+	l.Debug().
+		Int("itemCount", len(itemHashes)).
+		Int("perkCount", len(perkHashes)).
+		Msg("got the data to grab the DB")
+
+	startTime := time.Now()
+	d2Items, err := GetItemsByIDs(ctx, db, itemHashes)
 	if err != nil {
 		return nil, err
 	}
@@ -914,34 +969,24 @@ func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.Clie
 		return nil, err
 	}
 
-	// TODO: Could convert this to build items by ID requests
-	perks, err := GetPerks(ctx, db)
+	perks, err := GetPerksByIDs(ctx, db, perkHashes)
 	if err != nil {
 		return nil, err
 	}
+	l.Debug().TimeDiff("delay", time.Now(), startTime).Msg("Grabbed all the data needed for the loadout")
 
-	loadout := make(Loadout)
-	for _, item := range items {
-		if item.ItemInstanceId == nil {
-			log.Warn().Msgf("no instance id found")
-			continue
-		}
+	for instanceID, detail := range destinyItems {
 		snap := ItemSnapshot{
-			InstanceID: *item.ItemInstanceId,
+			InstanceID: instanceID,
 		}
-		d, err := GetItemDetails(ctx, client, membershipID, membershipType, *item.ItemInstanceId)
-		if err != nil {
-			log.Error().Err(err).Msgf("failed to get item from API")
-			continue
-		}
-		details := TransformItemToDetails(d, d2Items, damageTypes, perks, stats)
-		snap.Name = details.BaseInfo.Name
-		snap.ItemHash = details.BaseInfo.ItemHash
-		snap.ItemProperties = *details
-		snap.BucketHash = &details.BaseInfo.BucketHash
+		result := TransformItemToDetails(&detail, d2Items, damageTypes, perks, stats)
+		snap.Name = result.BaseInfo.Name
+		snap.ItemHash = result.BaseInfo.ItemHash
+		snap.ItemProperties = *result
+		snap.BucketHash = &result.BaseInfo.BucketHash
 		loadout[strconv.FormatInt(snap.ItemProperties.BaseInfo.BucketHash, 10)] = snap
 	}
-
+	l.Debug().Msg("loadout built")
 	return loadout, nil
 }
 func GetItemDetails(ctx context.Context, client *bungie.ClientWithResponses, membershipID int64, membershipType int64, weaponInstanceID string) (*bungie.DestinyItem, error) {

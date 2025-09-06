@@ -22,7 +22,6 @@ func TransformItemToDetails(
 
 	// Generate Base Info
 	if item.Item != nil {
-		// TODO: Only uses item for the name, can be extracted higher in a loop instead of all items
 		result.BaseInfo = generateBaseInfo(item, items, damages)
 	}
 
@@ -86,7 +85,7 @@ func generatePerks(item *bungie.DestinyItem, perks map[string]PerkDefinition) []
 	for _, p := range *item.Perks.Data.Perks {
 		perk, ok := perks[strconv.Itoa(int(*p.PerkHash))]
 		if !ok {
-			slog.Warn("Perk not found in manifest", "perkHash", strconv.Itoa(int(*p.PerkHash)))
+			log.Warn().Uint32("perkHash", *p.PerkHash).Msg("Perk not found in manifest")
 			continue
 		}
 		if !perk.IsDisplayable {
