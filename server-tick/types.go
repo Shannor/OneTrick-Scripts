@@ -920,7 +920,7 @@ func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.Clie
 			l.Warn().Msgf("destiny item was nil")
 			continue
 		}
-		destinyItems[*item.ItemInstanceId] = *d
+		destinyItems[strconv.Itoa(int(*item.ItemHash))] = *d
 	}
 
 	var (

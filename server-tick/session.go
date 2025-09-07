@@ -10,16 +10,17 @@ import (
 
 const (
 	SessionCollection = "sessions"
-	CutOffHours       = 10
+	CutOffHours       = 4
 )
 
 func IsStaleSession(s Session, activity ActivityHistory) bool {
+	now := time.Now()
 	if s.LastSeenTimestamp != nil {
-		duration := s.LastSeenTimestamp.Sub(activity.Period)
+		duration := s.LastSeenTimestamp.Sub(now)
 		return duration.Abs().Hours() >= CutOffHours
 	}
 	if s.UpdatedAt != nil {
-		duration := s.LastSeenTimestamp.Sub(activity.Period)
+		duration := s.UpdatedAt.Sub(now)
 		return duration.Abs().Hours() >= CutOffHours
 	}
 	return false

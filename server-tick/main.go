@@ -17,28 +17,37 @@ type Config struct {
 	taskNum       int64
 	attemptNum    string
 	DestinyAPIKey string
+	SkipSave      bool
 }
 
 func configFromEnv() (Config, error) {
 	taskNum, err := stringToInt(os.Getenv("CLOUD_RUN_TASK_INDEX"))
-	attemptNum := os.Getenv("CLOUD_RUN_TASK_ATTEMPT")
-	apiKey := os.Getenv("D2_API_KEY")
-
 	if err != nil {
 		return Config{}, err
 	}
 
+	attemptNum := os.Getenv("CLOUD_RUN_TASK_ATTEMPT")
+	apiKey := os.Getenv("D2_API_KEY")
+	skipSave, err := stringToInt(os.Getenv("SKIP_SAVE"))
+	if err != nil {
+		return Config{}, err
+	}
 	config := Config{
 		taskNum:       taskNum,
 		attemptNum:    attemptNum,
 		DestinyAPIKey: apiKey,
 	}
+	if skipSave == 1 {
+		config.SkipSave = true
+	}
 	return config, nil
 }
 
 func stringToInt(s string) (int64, error) {
-	sleepMs, err := strconv.ParseInt(s, 10, 64)
-	return sleepMs, err
+	if s == "" {
+		return 0, nil
+	}
+	return strconv.ParseInt(s, 10, 64)
 }
 
 const (
@@ -49,7 +58,7 @@ func main() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 	config, err := configFromEnv()
 	if err != nil {
-		log.Fatal().Err(err)
+		log.Fatal().Err(err).Msg("failed to get config")
 	}
 	l := log.With().Int64("taskNum", config.taskNum).Logger()
 	ctx := context.Background()
@@ -97,20 +106,21 @@ func main() {
 		// This could be moved to something else in the future maybe. It's not super necessary
 		// that it is done here before the rest of the logic. Just that it is done
 		ll := l.With().Str("session", session.ID).Int("count", i).Logger()
+		if !config.SkipSave {
+			ll.Info().Msg("starting to save loadout")
+			startTime := time.Now()
+			_, err = Save(ctx, db, cli, session.UserID, membershipID, session.CharacterID)
+			if err != nil {
+				ll.Warn().Err(err).Msg("failed to save loadout")
+				continue
+			}
+			ll.Info().
+				TimeDiff("loadoutDuration", time.Now(), startTime).
+				Msg("saved loadout")
 
-		ll.Info().Msg("starting to save loadout")
-		startTime := time.Now()
-		_, err = Save(ctx, db, cli, session.UserID, membershipID, session.CharacterID)
-		if err != nil {
-			ll.Warn().Err(err).Msg("failed to save loadout")
-			continue
 		}
-		ll.Info().
-			TimeDiff("loadoutDuration", time.Now(), startTime).
-			Msg("saved loadout")
-
 		ll.Info().Msg("starting to get pvp games")
-		startTime = time.Now()
+		startTime := time.Now()
 		// Activity history should be shared
 		activityHistories, err := GetAllPVP(
 			ctx,
