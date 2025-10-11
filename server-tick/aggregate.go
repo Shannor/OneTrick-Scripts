@@ -237,6 +237,7 @@ type BaseItemInfo struct {
 	InstanceId string      `firestore:"instanceId" json:"instanceId"`
 	ItemHash   int64       `firestore:"itemHash" json:"itemHash"`
 	Name       string      `firestore:"name" json:"name"`
+	Icon       string      `firestore:"icon" json:"icon"`
 }
 type DamageInfo struct {
 	Color           Color  `firestore:"color" json:"color"`
