@@ -443,7 +443,7 @@ func generateClassStats(statDefinitions map[string]StatDefinition, stats map[str
 		}
 		i := ClassStat{
 			Name:            info.DisplayProperties.Name,
-			Icon:            info.DisplayProperties.Name,
+			Icon:            setBaseBungieURL(&info.DisplayProperties.Icon),
 			HasIcon:         info.DisplayProperties.HasIcon,
 			Description:     info.DisplayProperties.Description,
 			StatCategory:    info.StatCategory,

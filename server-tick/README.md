@@ -2,6 +2,7 @@
 
 Deploying it
 ```shell
+    cd server-tick
     gcloud run jobs deploy server-tick \
         --source . \
         --tasks 1 \
