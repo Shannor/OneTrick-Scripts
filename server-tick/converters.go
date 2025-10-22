@@ -56,7 +56,7 @@ func generateBaseInfo(item *bungie.DestinyItem, items map[string]ItemDefinition,
 		InstanceId: *c.ItemInstanceId,
 		ItemHash:   int64(*c.ItemHash),
 		Name:       name,
-		Icon:       icon,
+		Icon:       setBaseBungieURL(&icon),
 	}
 
 	if item.Instance != nil {
