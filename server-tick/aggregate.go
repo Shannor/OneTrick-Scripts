@@ -93,6 +93,17 @@ func SetAggregate(ctx context.Context, db *firestore.Client, userID string, char
 
 func AddAggregate(ctx context.Context, db *firestore.Client, characterID string, history ActivityHistory, snapshotLink SnapshotLink, performance InstancePerformance) (*Aggregate, error) {
 	now := time.Now()
+	sessionIDs := make([]string, 0)
+	snapshotIDs := make([]string, 0)
+	characterIDs := make([]string, 0)
+
+	if snapshotLink.SessionID != nil {
+		sessionIDs = append(sessionIDs, *snapshotLink.SessionID)
+	}
+	if snapshotLink.SnapshotID != nil {
+		snapshotIDs = append(snapshotIDs, *snapshotLink.SnapshotID)
+	}
+	characterIDs = append(characterIDs, characterID)
 	aggregate := Aggregate{
 		ActivityID:      history.InstanceID,
 		ActivityDetails: history,
@@ -102,7 +113,10 @@ func AddAggregate(ctx context.Context, db *firestore.Client, characterID string,
 		Performance: map[string]InstancePerformance{
 			characterID: performance,
 		},
-		CreatedAt: now,
+		SessionIDs:   sessionIDs,
+		SnapshotIDs:  snapshotIDs,
+		CharacterIDs: characterIDs,
+		CreatedAt:    now,
 	}
 
 	iter := db.Collection(aggregateCollection).
@@ -134,6 +148,9 @@ func AddAggregate(ctx context.Context, db *firestore.Client, characterID string,
 			"performance": map[string]any{
 				characterID: performance,
 			},
+			"sessionIds":   firestore.ArrayUnion(toInterfaceSlice(sessionIDs)...),
+			"snapshotIds":  firestore.ArrayUnion(toInterfaceSlice(snapshotIDs)...),
+			"characterIds": firestore.ArrayUnion(toInterfaceSlice(characterIDs)...),
 		}, firestore.MergeAll)
 		if err != nil {
 			return nil, err
@@ -152,6 +169,15 @@ func AddAggregate(ctx context.Context, db *firestore.Client, characterID string,
 
 		return &aggregate, nil
 	}
+}
+
+// Helper function to convert any slice to []interface{}
+func toInterfaceSlice[T any](slice []T) []interface{} {
+	result := make([]interface{}, len(slice))
+	for i, v := range slice {
+		result[i] = v
+	}
+	return result
 }
 
 func LookupLink(agg *Aggregate, characterID string) *SnapshotLink {
@@ -198,6 +224,9 @@ type Aggregate struct {
 	ID              string                         `firestore:"id" json:"id"`
 	Performance     map[string]InstancePerformance `firestore:"performance" json:"performance"`
 	SnapshotLinks   map[string]SnapshotLink        `firestore:"snapshotLinks" json:"snapshotLinks"`
+	SnapshotIDs     []string                       `firestore:"snapshotIds" json:"snapshotIds"`
+	SessionIDs      []string                       `firestore:"sessionIds" json:"sessionIds"`
+	CharacterIDs    []string                       `firestore:"characterIds" json:"characterIds"`
 }
 type InstancePerformance struct {
 	Extra *map[string]UniqueStatValue `firestore:"extra" json:"extra,omitempty"`
