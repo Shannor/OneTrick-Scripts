@@ -261,12 +261,16 @@ type ItemProperties struct {
 	Stats Stats `firestore:"stats" json:"stats"`
 }
 type BaseItemInfo struct {
-	BucketHash int64       `firestore:"bucketHash" json:"bucketHash"`
-	Damage     *DamageInfo `firestore:"damageInfo" json:"damage,omitempty"`
-	InstanceId string      `firestore:"instanceId" json:"instanceId"`
-	ItemHash   int64       `firestore:"itemHash" json:"itemHash"`
-	Name       string      `firestore:"name" json:"name"`
-	Icon       string      `firestore:"icon" json:"icon"`
+	BucketHash                 int64       `firestore:"bucketHash" json:"bucketHash"`
+	Damage                     *DamageInfo `firestore:"damageInfo" json:"damage,omitempty"`
+	InstanceId                 string      `firestore:"instanceId" json:"instanceId"`
+	ItemHash                   int64       `firestore:"itemHash" json:"itemHash"`
+	Name                       string      `firestore:"name" json:"name"`
+	Icon                       string      `firestore:"icon" json:"icon"`
+	ItemTypeAndTierDisplayName string      `firestore:"itemTypeAndTierDisplayName" json:"itemTypeAndTierDisplayName"`
+	ItemTypeDisplayName        string      `firestore:"itemTypeDisplayName" json:"itemTypeDisplayName"`
+	TierTypeName               string      `firestore:"tierTypeName" json:"tierTypeName"`
+	TierType                   int         `firestore:"tierType" json:"tierType"`
 }
 type DamageInfo struct {
 	Color           Color  `firestore:"color" json:"color"`

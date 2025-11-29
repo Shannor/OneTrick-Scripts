@@ -50,13 +50,18 @@ func generateBaseInfo(item *bungie.DestinyItem, items map[string]ItemDefinition,
 	hash := strconv.Itoa(int(*c.ItemHash))
 	name := items[hash].DisplayProperties.Name
 	icon := items[hash].DisplayProperties.Icon
+	it := items[hash]
 
 	base := BaseItemInfo{
-		BucketHash: int64(*c.BucketHash),
-		InstanceId: *c.ItemInstanceId,
-		ItemHash:   int64(*c.ItemHash),
-		Name:       name,
-		Icon:       setBaseBungieURL(&icon),
+		BucketHash:                 int64(*c.BucketHash),
+		InstanceId:                 *c.ItemInstanceId,
+		ItemHash:                   int64(*c.ItemHash),
+		Name:                       name,
+		Icon:                       setBaseBungieURL(&icon),
+		ItemTypeAndTierDisplayName: it.ItemTypeAndTierDisplayName,
+		ItemTypeDisplayName:        it.ItemTypeDisplayName,
+		TierTypeName:               it.Inventory.TierTypeName,
+		TierType:                   it.Inventory.TierType,
 	}
 
 	if item.Instance != nil {

@@ -215,6 +215,8 @@ func GetVersionByIndex(configuration Configuration, index int64) (string, bool) 
 		return configuration.SandboxPerkVersion, true
 	case 11:
 		return configuration.RecordDefinitionVersion, true
+	case 12:
+		return configuration.CrucibleMapVersion, true
 	default:
 		return "", false
 	}
@@ -419,7 +421,24 @@ func performMigration(ctx context.Context, db *firestore.Client, manifest Manife
 				return strconv.FormatInt(int64(definition.Hash), 10)
 			},
 		)
+	case 12:
+		{
+			maps, err := BuildCrucibleMaps(manifest.ActivityDefinition)
+			if err != nil {
+				return err
+			}
+			return migrateCollection(
+				ctx,
+				db,
+				string(CrucibleMapCollection),
+				maps,
+				func(item any) string {
+					definition := item.(CrucibleMap)
+					return definition.Key
+				},
+			)
 
+		}
 	default:
 		log.Info().Int64("index", index).Msg("Unsupported index")
 		return nil
@@ -454,6 +473,8 @@ func GetConfigKeyByIndex(index int64) (string, bool) {
 		return "sandboxPerkVersion", true
 	case 11:
 		return "recordDefinitionVersion", true
+	case 12:
+		return "crucibleMapVersion", true
 	default:
 		return "", false
 	}

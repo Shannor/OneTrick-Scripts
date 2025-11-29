@@ -543,6 +543,7 @@ type Configuration struct {
 	ItemDefinitionVersion   string `json:"itemDefinitionVersion" firestore:"itemDefinitionVersion"`
 	SandboxPerkVersion      string `json:"sandboxPerkVersion" firestore:"sandboxPerkVersion"`
 	RecordDefinitionVersion string `json:"recordDefinitionVersion" firestore:"recordDefinitionVersion"`
+	CrucibleMapVersion      string `json:"crucibleMapVersion" firestore:"crucibleMapVersion"`
 }
 
 type WeaponBucket = uint32
@@ -605,4 +606,5 @@ const (
 	ItemDefinitionCollection   ManifestCollection = "d2ItemDefinitions"
 	SandboxPerkCollection      ManifestCollection = "d2SandboxPerks"
 	RecordDefinitionCollection ManifestCollection = "d2RecordDefinitions"
+	CrucibleMapCollection      ManifestCollection = "crucibleMaps"
 )
