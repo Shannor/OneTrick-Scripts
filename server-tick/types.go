@@ -904,7 +904,13 @@ func GetDamageTypesByIDs(ctx context.Context, db *firestore.Client, ids []int64)
 func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.ClientWithResponses, membershipID int64, membershipType int64, items []bungie.ItemComponent, stats map[string]StatDefinition) (Loadout, error) {
 	loadout := make(Loadout)
 	destinyItems := make(map[string]bungie.DestinyItem)
+	destinyItemStylesMapping := make(map[string]string)
 
+	var (
+		// Has Items and Sockets
+		itemHashes []int64
+		perkHashes []int64
+	)
 	l := log.With().Int64("membershipId", membershipID).Logger()
 	for _, item := range items {
 		if item.ItemInstanceId == nil {
@@ -921,13 +927,11 @@ func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.Clie
 			continue
 		}
 		destinyItems[strconv.Itoa(int(*item.ItemHash))] = *d
+		if item.OverrideStyleItemHash != nil {
+			itemHashes = append(itemHashes, int64(*item.OverrideStyleItemHash))
+			destinyItemStylesMapping[strconv.Itoa(int(*item.ItemHash))] = strconv.Itoa(int(*item.OverrideStyleItemHash))
+		}
 	}
-
-	var (
-		// Has Items and Sockets
-		itemHashes []int64
-		perkHashes []int64
-	)
 
 	l.Debug().Msg("build the list of hashes")
 	for instanceID, item := range destinyItems {
@@ -979,7 +983,15 @@ func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.Clie
 		snap := ItemSnapshot{
 			InstanceID: instanceID,
 		}
-		result := TransformItemToDetails(&detail, d2Items, damageTypes, perks, stats)
+		styleID := destinyItemStylesMapping[instanceID]
+		var styleItem *ItemDefinition
+		if styleID != "" {
+			s, ok := d2Items[styleID]
+			if ok {
+				styleItem = &s
+			}
+		}
+		result := TransformItemToDetails(&detail, d2Items, damageTypes, perks, stats, styleItem)
 		snap.Name = result.BaseInfo.Name
 		snap.ItemHash = result.BaseInfo.ItemHash
 		snap.ItemProperties = *result
@@ -989,9 +1001,9 @@ func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.Clie
 	l.Debug().Msg("loadout built")
 	return loadout, nil
 }
-func GetItemDetails(ctx context.Context, client *bungie.ClientWithResponses, membershipID int64, membershipType int64, weaponInstanceID string) (*bungie.DestinyItem, error) {
+func GetItemDetails(ctx context.Context, client *bungie.ClientWithResponses, membershipID int64, membershipType int64, instanceID string) (*bungie.DestinyItem, error) {
 	components := []int32{ItemPerksCode, ItemStatsCode, ItemSocketsCode, ItemCommonDataCode, ItemInstanceCode}
-	weaponInstanceIDInt64, err := strconv.ParseInt(weaponInstanceID, 10, 64)
+	weaponInstanceIDInt64, err := strconv.ParseInt(instanceID, 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert membershipId to int64: %v", err)
 	}
@@ -1008,7 +1020,7 @@ func GetItemDetails(ctx context.Context, client *bungie.ClientWithResponses, mem
 			"error",
 			err.Error(),
 			"weapon instance id",
-			weaponInstanceID,
+			instanceID,
 		).Error("Failed to get item details")
 		return nil, err
 	}

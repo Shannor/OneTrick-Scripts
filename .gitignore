@@ -111,3 +111,5 @@ go.work.sum
 
 # env file
 .env
+/migration/Migration
+/server-tick/Server_Tick

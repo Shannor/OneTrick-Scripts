@@ -7,6 +7,7 @@ import (
 	"serverTick/bungie"
 	"serverTick/generator"
 	"serverTick/utils"
+	"slices"
 	"strconv"
 	"time"
 
@@ -62,10 +63,46 @@ func generateSnapshot(ctx context.Context, db *firestore.Client, client *bungie.
 	}, nil
 }
 
+// generateHash generates a unique hash string for a given CharacterSnapshot to identify its current state.
+// It computes the hash based on the instance IDs and perks of items in the snapshot's Loadout.
+func generateHash(snapshot CharacterSnapshot) (string, error) {
+	var hashing []string
+
+	// Get and sort the keys from the Loadout map to ensure deterministic iteration order.
+	keys := make([]string, 0, len(snapshot.Loadout))
+	for k := range snapshot.Loadout {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+
+	for _, key := range keys {
+		item := snapshot.Loadout[key]
+		// Add each item's instance ID
+		hashing = append(hashing, item.ItemProperties.BaseInfo.InstanceId)
+
+		// Sort perks by hash to ensure a deterministic order.
+		perks := item.ItemProperties.Perks
+		slices.SortFunc(perks, func(a, b Perk) int {
+			return int(a.Hash - b.Hash)
+		})
+
+		// Add each item's perks ids
+		for _, perk := range perks {
+			hashing = append(hashing, fmt.Sprintf("%s-%d", item.InstanceID, perk.Hash))
+		}
+	}
+	hash, err := utils.HashMap(hashing)
+	if err != nil {
+		return "", err
+	}
+	return hash, nil
+}
+
 func create(ctx context.Context, db *firestore.Client, userID string, snapshot CharacterSnapshot) (*string, error) {
 
 	if snapshot.Hash == "" {
-		hash, err := utils.HashMap(snapshot.Loadout)
+		// Instance has of each item in the Loadout
+		hash, err := generateHash(snapshot)
 		if err != nil {
 			return nil, err
 		}

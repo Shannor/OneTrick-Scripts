@@ -14,6 +14,7 @@ func TransformItemToDetails(
 	damages map[string]DamageType,
 	perks map[string]PerkDefinition,
 	stats map[string]StatDefinition,
+	styleItem *ItemDefinition,
 ) *ItemProperties {
 	if item == nil {
 		return nil
@@ -22,18 +23,16 @@ func TransformItemToDetails(
 
 	// Generate Base Info
 	if item.Item != nil {
-		result.BaseInfo = generateBaseInfo(item, items, damages)
+		result.BaseInfo = generateBaseInfo(item, items, damages, styleItem)
 	}
 
 	// Generate Perks
 	if item.Perks != nil && item.Perks.Data != nil {
-		// TODO: Can get all the perks in advance
 		result.Perks = generatePerks(item, perks)
 	}
 
 	// Generate Sockets
 	if item.Sockets != nil && item.Sockets.Data != nil {
-		// TODO: Can get all the sockets in advance
 		result.Sockets = generateSockets(item, items)
 	}
 
@@ -45,7 +44,7 @@ func TransformItemToDetails(
 	return &result
 }
 
-func generateBaseInfo(item *bungie.DestinyItem, items map[string]ItemDefinition, damages map[string]DamageType) BaseItemInfo {
+func generateBaseInfo(item *bungie.DestinyItem, items map[string]ItemDefinition, damages map[string]DamageType, styleItem *ItemDefinition) BaseItemInfo {
 	c := *item.Item.ItemComponent
 	hash := strconv.Itoa(int(*c.ItemHash))
 	name := items[hash].DisplayProperties.Name
@@ -64,6 +63,19 @@ func generateBaseInfo(item *bungie.DestinyItem, items map[string]ItemDefinition,
 		TierType:                   it.Inventory.TierType,
 	}
 
+	if styleItem != nil {
+		base.StyleBasicInfo = &BaseItemInfo{
+			BucketHash:                 int64(*c.BucketHash),
+			InstanceId:                 *c.ItemInstanceId,
+			ItemHash:                   styleItem.Hash,
+			Name:                       styleItem.DisplayProperties.Name,
+			Icon:                       setBaseBungieURL(&styleItem.DisplayProperties.Icon),
+			ItemTypeAndTierDisplayName: styleItem.ItemTypeAndTierDisplayName,
+			ItemTypeDisplayName:        styleItem.ItemTypeDisplayName,
+			TierTypeName:               styleItem.Inventory.TierTypeName,
+			TierType:                   styleItem.Inventory.TierType,
+		}
+	}
 	if item.Instance != nil {
 		instance := *item.Instance.ItemInstanceComponent
 		if instance.DamageTypeHash != nil {
