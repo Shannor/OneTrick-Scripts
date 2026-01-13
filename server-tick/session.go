@@ -10,10 +10,11 @@ import (
 
 const (
 	SessionCollection = "sessions"
-	CutOffHours       = 4
+	// CutOffHours is when we will automatically complete a session if no activity seen in the time span
+	CutOffHours = 2
 )
 
-func IsStaleSession(s Session, activity ActivityHistory) bool {
+func IsStaleSession(s Session) bool {
 	now := time.Now()
 	if s.LastSeenTimestamp != nil {
 		duration := s.LastSeenTimestamp.Sub(now)
@@ -33,9 +34,29 @@ func IsInactiveSession(s Session) bool {
 }
 
 func GetSessions(ctx context.Context, db *firestore.Client) ([]Session, error) {
+	now := time.Now()
+
+	// Grace period for sessions that might have just completed.
+	last15Minutes := now.Add(-15 * time.Minute)
+
+	q1 := firestore.PropertyFilter{
+		Path:     "status",
+		Operator: "==",
+		Value:    "pending",
+	}
+
+	q2 := firestore.PropertyFilter{
+		Path:     "completedAt",
+		Operator: ">=",
+		Value:    last15Minutes,
+	}
+
+	orFilter := firestore.OrFilter{
+		Filters: []firestore.EntityFilter{q1, q2},
+	}
 
 	docs, err := db.Collection(SessionCollection).
-		Where("status", "==", "pending").
+		WhereEntity(orFilter).
 		Documents(ctx).
 		GetAll()
 	if err != nil {

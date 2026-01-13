@@ -183,7 +183,8 @@ func createHistoryEntry(ctx context.Context, db *firestore.Client, og CharacterS
 
 func FindBestFit(ctx context.Context, db *firestore.Client, userID string, characterID string, activityPeriod time.Time, weapons map[string]WeaponInstanceMetrics) (*CharacterSnapshot, *SnapshotLink, error) {
 
-	minTime := activityPeriod.Add(time.Duration(-12) * time.Hour)
+	// Get the last hour of snapshots
+	minTime := activityPeriod.Add(time.Duration(-1) * time.Hour)
 	// A game can last about 8 minutes over the starting time
 	maxTime := activityPeriod.Add(time.Duration(15) * time.Minute)
 	l := slog.With(
@@ -231,26 +232,46 @@ func FindBestFit(ctx context.Context, db *firestore.Client, userID string, chara
 			weaponSet[strconv.FormatInt(*weapon.ReferenceID, 10)] = true
 		}
 	}
+	/**
+	* Best Fit Logic.
+	*
+	* This logic aims to find the best fit snapshot based on weapon matches.
+	* It prioritizes kinetic and energy weapons over power weapons.
+	* It's based on the weapons you get kills with. If no kills, we can't tell.
+	* If no power weapon kills, we can't tell the difference either.
+	 */
 	for _, h := range histories {
-		matches := 0
+		weight := 0
 		if weaponSet[h.Meta.KineticID] {
-			matches += 2
+			weight += 2
 		}
 		if weaponSet[h.Meta.EnergyID] {
-			matches += 2
+			weight += 2
 		}
 		if weaponSet[h.Meta.PowerID] {
-			matches++
+			weight++
 		}
-
-		if bestFit == nil && matches >= 1 {
+		// Nothing found yet, and this is the closest so far.
+		if bestFit == nil && weight > 0 {
 			bestFit = &h
-			bestFitScore = matches
+			bestFitScore = weight
 			continue
 		}
-		if matches > bestFitScore {
+
+		// Current has a better score
+		if weight > bestFitScore {
 			bestFit = &h
-			bestFitScore = matches
+			bestFitScore = weight
+		}
+		// Scores match. Check which is closer to activity start time.
+		if bestFit != nil && weight == bestFitScore {
+			bestFitDistance := activityPeriod.Sub(bestFit.Timestamp)
+			currentDistance := activityPeriod.Sub(h.Timestamp)
+			if currentDistance.Abs() < bestFitDistance.Abs() {
+				bestFit = &h
+				bestFitScore = weight
+			}
+
 		}
 	}
 

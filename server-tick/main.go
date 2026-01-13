@@ -68,6 +68,13 @@ func main() {
 		l.Fatal().Err(err).Msgf("Failed to create client: %v", err)
 	}
 
+	defer func(db *firestore.Client) {
+		err := db.Close()
+		if err != nil {
+			l.Fatal().Err(err).Msg("failed to close db")
+		}
+	}(db)
+
 	hc := http.Client{}
 	cli, err := bungie.NewClientWithResponses(
 		"https://www.bungie.net/Platform",
@@ -149,7 +156,7 @@ func main() {
 
 		if session.LastSeenActivityID != nil && *session.LastSeenActivityID == latest.InstanceID {
 			ll.Info().Msg("[SKIP]: No new activities since last check-in")
-			if IsStaleSession(session, latest) {
+			if IsStaleSession(session) {
 				err := EndSession(ctx, db, session.ID)
 				if err != nil {
 					ll.Error().Err(err).Msg("failed to end session")
