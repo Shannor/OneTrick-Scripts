@@ -4,8 +4,6 @@ import (
 	"log/slog"
 	"serverTick/bungie"
 	"strconv"
-
-	"github.com/rs/zerolog/log"
 )
 
 func TransformItemToDetails(
@@ -104,7 +102,7 @@ func generatePerks(item *bungie.DestinyItem, perks map[string]PerkDefinition) []
 	for _, p := range *item.Perks.Data.Perks {
 		perk, ok := perks[strconv.Itoa(int(*p.PerkHash))]
 		if !ok {
-			log.Warn().Uint32("perkHash", *p.PerkHash).Msg("Perk not found in manifest")
+			slog.Warn("Perk not found in manifest", "perkHash", *p.PerkHash)
 			continue
 		}
 		if !perk.IsDisplayable {
@@ -124,12 +122,12 @@ func generateSockets(item *bungie.DestinyItem, items map[string]ItemDefinition) 
 	var sockets []Socket
 	for _, s := range *item.Sockets.Data.Sockets {
 		if s.PlugHash == nil {
-			log.Warn().Msg("Socket has no plug hash")
+			slog.Warn("Socket has no plug hash")
 			continue
 		}
 		socket, ok := items[strconv.Itoa(int(*s.PlugHash))]
 		if !ok {
-			log.Warn().Uint32("socketHash", *s.PlugHash).Msg("Socket not found in manifest")
+			slog.Warn("Socket not found in manifest", "socketHash", *s.PlugHash)
 			continue
 		}
 
@@ -152,12 +150,12 @@ func generateStats(item *bungie.DestinyItem, statDefinitions map[string]StatDefi
 	stats := make(Stats)
 	for key, s := range *item.Stats.Data.Stats {
 		if s.StatHash == nil || s.Value == nil {
-			slog.Warn("Missing stat hash or value for stat: ", key)
+			slog.Warn("Missing stat hash or value for stat", "statKey", key)
 			continue
 		}
 		stat, ok := statDefinitions[strconv.Itoa(int(*s.StatHash))]
 		if !ok {
-			slog.Warn("Stat not found in manifest: ", strconv.Itoa(int(*s.StatHash)))
+			slog.Warn("Stat not found in manifest", "statHash", *s.StatHash)
 			continue
 		}
 		value := int64(*s.Value)
@@ -254,7 +252,7 @@ func TransformPeriodGroups(period []bungie.StatsPeriodGroup, activities map[stri
 	for _, group := range period {
 		r := TransformPeriodGroup(&group, activities, directorDefinitions, modes)
 		if r == nil {
-			log.Warn().Msg("period group returned nil")
+			slog.Warn("period group returned nil")
 			continue
 		}
 		result = append(result, *r)
@@ -269,12 +267,12 @@ func TransformPeriodGroup(period *bungie.StatsPeriodGroup, activities map[string
 
 	definition, ok := activities[strconv.Itoa(int(*period.ActivityDetails.ReferenceId))]
 	if !ok {
-		log.Warn().Msgf("Activity locale not found in manifest: %d ", period.ActivityDetails.ReferenceId)
+		slog.Warn("Activity locale not found in manifest", "referenceId", *period.ActivityDetails.ReferenceId)
 		return nil
 	}
 	directorDefinition, ok := directorDefintions[strconv.Itoa(int(*period.ActivityDetails.DirectorActivityHash))]
 	if !ok {
-		log.Warn().Msgf("Activity Directory not found in manifest: %d", period.ActivityDetails.DirectorActivityHash)
+		slog.Warn("Activity Directory not found in manifest", "directorActivityHash", *period.ActivityDetails.DirectorActivityHash)
 		return nil
 	}
 	activityMode := modes[strconv.Itoa(directorDefinition.DirectActivityModeHash)]

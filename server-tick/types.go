@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"cloud.google.com/go/firestore"
-	"github.com/rs/zerolog/log"
 )
 
 var ErrDestinyServerDown = errors.New("destiny server is down")
@@ -911,19 +910,19 @@ func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.Clie
 		itemHashes []int64
 		perkHashes []int64
 	)
-	l := log.With().Int64("membershipId", membershipID).Logger()
+	l := slog.With("membershipId", membershipID)
 	for _, item := range items {
 		if item.ItemInstanceId == nil {
-			l.Warn().Msgf("no instance id found")
+			l.Warn("no instance id found")
 			continue
 		}
 		d, err := GetItemDetails(ctx, client, membershipID, membershipType, *item.ItemInstanceId)
 		if err != nil {
-			l.Error().Err(err).Msgf("failed to get item from API")
+			l.Error("failed to get item from API", "error", err)
 			continue
 		}
 		if d == nil {
-			l.Warn().Msgf("destiny item was nil")
+			l.Warn("destiny item was nil")
 			continue
 		}
 		destinyItems[strconv.Itoa(int(*item.ItemHash))] = *d
@@ -933,12 +932,12 @@ func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.Clie
 		}
 	}
 
-	l.Debug().Msg("build the list of hashes")
+	l.Debug("build the list of hashes")
 	for instanceID, item := range destinyItems {
 		// Base Item Hash
 		itemID, err := strconv.ParseInt(instanceID, 10, 64)
 		if err != nil {
-			l.Warn().Msg("failed to convert instance ID")
+			l.Warn("failed to convert instance ID")
 			continue
 		}
 		itemHashes = append(itemHashes, itemID)
@@ -957,10 +956,10 @@ func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.Clie
 			}
 		}
 	}
-	l.Debug().
-		Int("itemCount", len(itemHashes)).
-		Int("perkCount", len(perkHashes)).
-		Msg("got the data to grab the DB")
+	l.Debug("got the data to grab the DB",
+		"itemCount", len(itemHashes),
+		"perkCount", len(perkHashes),
+	)
 
 	startTime := time.Now()
 	d2Items, err := GetItemsByIDs(ctx, db, itemHashes)
@@ -977,7 +976,7 @@ func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.Clie
 	if err != nil {
 		return nil, err
 	}
-	l.Debug().TimeDiff("delay", time.Now(), startTime).Msg("Grabbed all the data needed for the loadout")
+	l.Debug("Grabbed all the data needed for the loadout", "duration", time.Since(startTime))
 
 	for instanceID, detail := range destinyItems {
 		snap := ItemSnapshot{
@@ -998,7 +997,7 @@ func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.Clie
 		snap.BucketHash = &result.BaseInfo.BucketHash
 		loadout[strconv.FormatInt(snap.ItemProperties.BaseInfo.BucketHash, 10)] = snap
 	}
-	l.Debug().Msg("loadout built")
+	l.Debug("loadout built")
 	return loadout, nil
 }
 func GetItemDetails(ctx context.Context, client *bungie.ClientWithResponses, membershipID int64, membershipType int64, instanceID string) (*bungie.DestinyItem, error) {

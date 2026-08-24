@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"serverTick/bungie"
 	"serverTick/utils"
 	"strconv"
 	"time"
 
 	"cloud.google.com/go/firestore"
-	"github.com/rs/zerolog/log"
 	"google.golang.org/api/iterator"
 )
 
@@ -40,16 +40,16 @@ func GetPerformances(ctx context.Context, client *bungie.ClientWithResponses, db
 		return nil, fmt.Errorf("invalid activity ID: %w", err)
 	}
 
-	l := log.With().Str("activityId", activityID).Logger()
+	l := slog.With("activityId", activityID)
 
 	resp, err := client.Destiny2GetPostGameCarnageReportWithResponse(ctx, id)
 	if err != nil {
-		l.Error().Err(err).Msg("Failed to get post game carnage report")
+		l.Error("Failed to get post game carnage report", "error", err)
 		return nil, err
 	}
 	data := resp.JSON200.PostGameCarnageReportData
 	if data.Entries == nil || data.ActivityDetails == nil {
-		l.Error().Msg("No data found for activity")
+		l.Error("No data found for activity")
 		return nil, fmt.Errorf("nil data response")
 	}
 

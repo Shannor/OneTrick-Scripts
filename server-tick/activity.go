@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"serverTick/bungie"
 	"strconv"
 	"time"
 
 	"cloud.google.com/go/firestore"
-	"github.com/rs/zerolog/log"
 )
 
 func GetAllPVP(ctx context.Context, client *bungie.ClientWithResponses, db *firestore.Client, membershipID string, membershipType int64, characterID string, count int64, page int64) (
@@ -177,7 +177,7 @@ func GetLoadout(ctx context.Context, db *firestore.Client, client *bungie.Client
 
 	statDefinitions, err := GetStats(ctx, db)
 	if err != nil {
-		log.Warn().Err(err).Msg("failed to get statDefinitions but still will generate stats")
+		slog.Warn("failed to get statDefinitions but still will generate stats", "error", err)
 	}
 	stats := make(map[string]ClassStat)
 	if test.JSON200.Response.Characters.Data != nil {
@@ -191,7 +191,7 @@ func GetLoadout(ctx context.Context, db *firestore.Client, client *bungie.Client
 	}
 	loadout, err := buildLoadout(ctx, db, client, membershipID, membershipType, results, statDefinitions)
 	if err != nil {
-		log.Error().Err(err).Msg("couldn't build the loadout")
+		slog.Error("couldn't build the loadout", "error", err)
 		return nil, nil, nil, err
 	}
 	return loadout, stats, timeStamp, nil

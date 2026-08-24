@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"cloud.google.com/go/firestore"
-	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -114,7 +113,7 @@ func create(ctx context.Context, db *firestore.Client, userID string, snapshot C
 		return nil, err
 	}
 	if existingSnapshot != nil {
-		log.Info().Msg("Creating a history entry")
+		slog.Info("Creating a history entry")
 		return createHistoryEntry(ctx, db, *existingSnapshot)
 	}
 
@@ -128,11 +127,11 @@ func create(ctx context.Context, db *firestore.Client, userID string, snapshot C
 	ref := db.Collection(snapshotCollection).NewDoc()
 	snapshot.ID = ref.ID
 	_, err = ref.Set(ctx, snapshot)
-	log.Info().Msg("Created original snapshot")
+	slog.Info("Created original snapshot")
 	if err != nil {
 		return nil, err
 	}
-	log.Info().Msg("Creating a history entry for original snapshot")
+	slog.Info("Creating a history entry for original snapshot")
 	return createHistoryEntry(ctx, db, snapshot)
 }
 
@@ -326,16 +325,16 @@ func EnrichInstancePerformance(snapshot *CharacterSnapshot, performance Instance
 		Weapons:     performance.Weapons,
 	}
 	if snapshot == nil {
-		log.Debug().Msg("No provided snapshot to perform enrichment on")
+		slog.Debug("No provided snapshot to perform enrichment on")
 		return result, nil
 	}
 
 	if len(performance.Weapons) == 0 {
-		log.Debug().Msg("No metrics provided to enrich")
+		slog.Debug("No metrics provided to enrich")
 		return result, nil
 	}
 	if snapshot.Loadout == nil {
-		log.Debug().Msg("No loadout provided to enrich")
+		slog.Debug("No loadout provided to enrich")
 		return result, nil
 	}
 
