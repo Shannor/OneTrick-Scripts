@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -99,6 +100,39 @@ func DeleteSession(ctx context.Context, db *firestore.Client, ID string) error {
 		return fmt.Errorf("failed to delete session: %v", err)
 	}
 	return nil
+}
+
+func CleanupEmptyCompletedSessions(ctx context.Context, db *firestore.Client, dryRun bool) (int, error) {
+	docs, err := db.Collection(SessionCollection).
+		Where("status", "==", SessionComplete).
+		Documents(ctx).
+		GetAll()
+	if err != nil {
+		return 0, fmt.Errorf("failed to fetch completed sessions for cleanup: %w", err)
+	}
+
+	deletedCount := 0
+	for _, doc := range docs {
+		var s Session
+		if err := doc.DataTo(&s); err != nil {
+			slog.Error("failed to parse session for cleanup", "docId", doc.Ref.ID, "error", err)
+			continue
+		}
+
+		if len(s.AggregateIDs) == 0 {
+			if dryRun {
+				slog.Info("[DRY-RUN] would delete older empty completed session", "sessionId", s.ID)
+			} else {
+				if _, err := doc.Ref.Delete(ctx); err != nil {
+					slog.Error("failed to delete empty completed session", "sessionId", s.ID, "error", err)
+					continue
+				}
+				slog.Info("deleted older empty completed session", "sessionId", s.ID)
+			}
+			deletedCount++
+		}
+	}
+	return deletedCount, nil
 }
 
 func EndOrDeleteSession(ctx context.Context, db *firestore.Client, s Session) error {
