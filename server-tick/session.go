@@ -93,6 +93,21 @@ func SetLastActivity(ctx context.Context, db *firestore.Client, ID, activityID s
 	return nil
 }
 
+func DeleteSession(ctx context.Context, db *firestore.Client, ID string) error {
+	_, err := db.Collection(SessionCollection).Doc(ID).Delete(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to delete session: %v", err)
+	}
+	return nil
+}
+
+func EndOrDeleteSession(ctx context.Context, db *firestore.Client, s Session) error {
+	if len(s.AggregateIDs) == 0 {
+		return DeleteSession(ctx, db, s.ID)
+	}
+	return EndSession(ctx, db, s.ID)
+}
+
 func EndSession(ctx context.Context, db *firestore.Client, ID string) error {
 	completedBy := AuditField{
 		ID:       "system",

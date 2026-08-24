@@ -171,14 +171,22 @@ func main() {
 			ll.Info("[SKIP]: No new activities since last check-in")
 			if IsStaleSession(session) {
 				if config.DryRun {
-					ll.Info("[DRY-RUN] would end stale session")
+					if len(session.AggregateIDs) == 0 {
+						ll.Info("[DRY-RUN] would delete stale session (no activities)")
+					} else {
+						ll.Info("[DRY-RUN] would end stale session")
+					}
 				} else {
-					err := EndSession(ctx, db, session.ID)
+					err := EndOrDeleteSession(ctx, db, session)
 					if err != nil {
-						ll.Error("failed to end session", "error", err)
+						ll.Error("failed to process stale session", "error", err)
 						continue
 					}
-					ll.Info("session is stale. Ending session")
+					if len(session.AggregateIDs) == 0 {
+						ll.Info("session is stale with no activities. Deleted session")
+					} else {
+						ll.Info("session is stale. Ending session")
+					}
 				}
 				continue
 			}
@@ -200,14 +208,22 @@ func main() {
 			ll.Info("[SKIP]: No new activity to save. Checking if Inactive")
 			if IsInactiveSession(session) {
 				if config.DryRun {
-					ll.Info("[DRY-RUN] would end inactive session")
+					if len(session.AggregateIDs) == 0 {
+						ll.Info("[DRY-RUN] would delete inactive session (no activities)")
+					} else {
+						ll.Info("[DRY-RUN] would end inactive session")
+					}
 				} else {
-					err := EndSession(ctx, db, session.ID)
+					err := EndOrDeleteSession(ctx, db, session)
 					if err != nil {
-						ll.Error("failed to end session", "error", err)
+						ll.Error("failed to process inactive session", "error", err)
 						continue
 					}
-					ll.Info("session is inactive. Ending session")
+					if len(session.AggregateIDs) == 0 {
+						ll.Info("session is inactive with no activities. Deleted session")
+					} else {
+						ll.Info("session is inactive. Ending session")
+					}
 				}
 				continue
 			}
