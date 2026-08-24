@@ -10,27 +10,24 @@ import (
 
 const (
 	SessionCollection = "sessions"
-	// CutOffHours is when we will automatically complete a session if no activity seen in the time span
-	CutOffHours = 2
+	// CutOffDuration is when we will automatically complete a session if no activity seen in the time span
+	CutOffDuration = 1 * time.Hour
 )
 
 func IsStaleSession(s Session) bool {
 	now := time.Now()
 	if s.LastSeenTimestamp != nil {
-		duration := s.LastSeenTimestamp.Sub(now)
-		return duration.Abs().Hours() >= CutOffHours
+		return now.Sub(*s.LastSeenTimestamp) >= CutOffDuration
 	}
 	if s.UpdatedAt != nil {
-		duration := s.UpdatedAt.Sub(now)
-		return duration.Abs().Hours() >= CutOffHours
+		return now.Sub(*s.UpdatedAt) >= CutOffDuration
 	}
 	return false
 }
 
 func IsInactiveSession(s Session) bool {
 	now := time.Now()
-	hours := s.StartedAt.Sub(now).Abs().Hours()
-	return hours >= CutOffHours
+	return now.Sub(s.StartedAt) >= CutOffDuration
 }
 
 func GetSessions(ctx context.Context, db *firestore.Client) ([]Session, error) {

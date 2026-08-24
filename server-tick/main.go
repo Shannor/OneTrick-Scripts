@@ -18,6 +18,7 @@ type Config struct {
 	attemptNum    string
 	DestinyAPIKey string
 	SkipSave      bool
+	DryRun        bool
 }
 
 func configFromEnv() (Config, error) {
@@ -40,6 +41,13 @@ func configFromEnv() (Config, error) {
 	if skipSave == 1 {
 		config.SkipSave = true
 	}
+	dryRun, err := stringToInt(os.Getenv("DRY_RUN"))
+	if err != nil {
+		return Config{}, err
+	}
+	if dryRun == 1 {
+		config.DryRun = true
+	}
 	return config, nil
 }
 
@@ -60,7 +68,10 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to get config")
 	}
-	l := log.With().Int64("taskNum", config.taskNum).Logger()
+	l := log.With().Int64("taskNum", config.taskNum).Bool("dryRun", config.DryRun).Logger()
+	if config.DryRun {
+		l.Info().Msg("running in dry-run mode, no writes will be performed")
+	}
 	ctx := context.Background()
 
 	db, err := firestore.NewClient(ctx, projectID)
@@ -114,17 +125,20 @@ func main() {
 		// that it is done here before the rest of the logic. Just that it is done
 		ll := l.With().Str("session", session.ID).Int("count", i).Logger()
 		if !config.SkipSave {
-			ll.Info().Msg("starting to save loadout")
-			startTime := time.Now()
-			_, err = Save(ctx, db, cli, session.UserID, membershipID, session.CharacterID)
-			if err != nil {
-				ll.Warn().Err(err).Msg("failed to save loadout")
-				continue
+			if config.DryRun {
+				ll.Info().Msg("[DRY-RUN] would save loadout")
+			} else {
+				ll.Info().Msg("starting to save loadout")
+				startTime := time.Now()
+				_, err = Save(ctx, db, cli, session.UserID, membershipID, session.CharacterID)
+				if err != nil {
+					ll.Warn().Err(err).Msg("failed to save loadout")
+					continue
+				}
+				ll.Info().
+					TimeDiff("loadoutDuration", time.Now(), startTime).
+					Msg("saved loadout")
 			}
-			ll.Info().
-				TimeDiff("loadoutDuration", time.Now(), startTime).
-				Msg("saved loadout")
-
 		}
 		ll.Info().Msg("starting to get pvp games")
 		startTime := time.Now()
@@ -157,12 +171,16 @@ func main() {
 		if session.LastSeenActivityID != nil && *session.LastSeenActivityID == latest.InstanceID {
 			ll.Info().Msg("[SKIP]: No new activities since last check-in")
 			if IsStaleSession(session) {
-				err := EndSession(ctx, db, session.ID)
-				if err != nil {
-					ll.Error().Err(err).Msg("failed to end session")
-					continue
+				if config.DryRun {
+					ll.Info().Msg("[DRY-RUN] would end stale session")
+				} else {
+					err := EndSession(ctx, db, session.ID)
+					if err != nil {
+						ll.Error().Err(err).Msg("failed to end session")
+						continue
+					}
+					ll.Info().Msg("session is stale. Ending session")
 				}
-				ll.Info().Msg("session is stale. Ending session")
 				continue
 			}
 			continue
@@ -182,12 +200,16 @@ func main() {
 		if len(IDs) == 0 {
 			l.Info().Msg("[SKIP]: No new activity to save. Checking if Inactive")
 			if IsInactiveSession(session) {
-				err := EndSession(ctx, db, session.ID)
-				if err != nil {
-					ll.Error().Err(err).Msg("failed to end session")
-					continue
+				if config.DryRun {
+					ll.Info().Msg("[DRY-RUN] would end inactive session")
+				} else {
+					err := EndSession(ctx, db, session.ID)
+					if err != nil {
+						ll.Error().Err(err).Msg("failed to end session")
+						continue
+					}
+					ll.Info().Msg("session is inactive. Ending session")
 				}
-				ll.Info().Msg("session is inactive. Ending session")
 				continue
 			}
 			continue
@@ -211,11 +233,6 @@ func main() {
 		}
 
 		aggIDs := make([]string, 0)
-		// TODO: Maybe this should be after total success at the end of the loop
-		err = SetLastActivity(ctx, db, session.ID, latest.InstanceID)
-		if err != nil {
-			l.Warn().Err(err).Msg("failed to save last activity for session. Continuing on")
-		}
 		for _, history := range histories {
 			agg := existingAggMap[history.InstanceID]
 
@@ -236,6 +253,13 @@ func main() {
 				ll.Warn().Str("userId", session.UserID).Msg("no performance found for member")
 				continue
 			}
+
+			if config.DryRun {
+				ll.Info().Str("activityId", history.InstanceID).Msg("[DRY-RUN] would set aggregate")
+				aggIDs = append(aggIDs, history.InstanceID)
+				continue
+			}
+
 			a, err := SetAggregate(
 				ctx,
 				db,
@@ -252,6 +276,26 @@ func main() {
 			}
 			aggIDs = append(aggIDs, a.ID)
 		}
+
+		// Only update the session if we actually processed new activities
+		if len(aggIDs) == 0 {
+			ll.Info().Msg("[SKIP]: All activities already linked. No session update needed")
+			continue
+		}
+
+		if config.DryRun {
+			ll.Info().
+				Strs("aggregateIds", aggIDs).
+				Str("latestActivityId", latest.InstanceID).
+				Msg("[DRY-RUN] would update session with last activity and aggregate IDs")
+			continue
+		}
+
+		err = SetLastActivity(ctx, db, session.ID, latest.InstanceID)
+		if err != nil {
+			l.Warn().Err(err).Msg("failed to save last activity for session. Continuing on")
+		}
+
 		l.Info().Strs("aggregateIds", aggIDs).Msgf("Aggregates to add")
 
 		err = AddAggregateIDs(ctx, db, session.ID, aggIDs)
