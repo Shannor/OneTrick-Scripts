@@ -115,10 +115,7 @@ func main() {
 	} else {
 		l.Info("received sessions to process", "sessions", len(sessions))
 		for i, session := range sessions {
-			if session.Status != nil && *session.Status == SessionComplete {
-				l.Info("[SKIP]: session is already completed", "session", session.ID)
-				continue
-			}
+			isCompleted := session.Status != nil && *session.Status == SessionComplete
 
 			membershipType, membershipID, err := GetMembershipType(ctx, db, session.UserID)
 			if err != nil {
@@ -171,7 +168,7 @@ func main() {
 
 			if session.LastSeenActivityID != nil && *session.LastSeenActivityID == latest.InstanceID {
 				ll.Info("[SKIP]: No new activities since last check-in")
-				if IsStaleSession(session) {
+				if !isCompleted && IsStaleSession(session) {
 					if config.DryRun {
 						if len(session.AggregateIDs) == 0 {
 							ll.Info("[DRY-RUN] would delete stale session (no activities)")
@@ -208,7 +205,7 @@ func main() {
 
 			if len(IDs) == 0 {
 				ll.Info("[SKIP]: No new activity to save. Checking if Inactive")
-				if IsInactiveSession(session) {
+				if !isCompleted && IsInactiveSession(session) {
 					if config.DryRun {
 						if len(session.AggregateIDs) == 0 {
 							ll.Info("[DRY-RUN] would delete inactive session (no activities)")
@@ -306,9 +303,11 @@ func main() {
 				continue
 			}
 
-			err = SetLastActivity(ctx, db, session.ID, latest.InstanceID)
-			if err != nil {
-				ll.Warn("failed to save last activity for session. Continuing on", "error", err)
+			if !isCompleted {
+				err = SetLastActivity(ctx, db, session.ID, latest.InstanceID)
+				if err != nil {
+					ll.Warn("failed to save last activity for session. Continuing on", "error", err)
+				}
 			}
 
 			ll.Info("Aggregates to add", "aggregateIds", aggIDs)
