@@ -32,29 +32,8 @@ func IsInactiveSession(s Session) bool {
 }
 
 func GetSessions(ctx context.Context, db *firestore.Client) ([]Session, error) {
-	now := time.Now()
-
-	// Grace period for sessions that might have just completed.
-	last15Minutes := now.Add(-15 * time.Minute)
-
-	q1 := firestore.PropertyFilter{
-		Path:     "status",
-		Operator: "==",
-		Value:    "pending",
-	}
-
-	q2 := firestore.PropertyFilter{
-		Path:     "completedAt",
-		Operator: ">=",
-		Value:    last15Minutes,
-	}
-
-	orFilter := firestore.OrFilter{
-		Filters: []firestore.EntityFilter{q1, q2},
-	}
-
 	docs, err := db.Collection(SessionCollection).
-		WhereEntity(orFilter).
+		Where("status", "==", SessionPending).
 		Documents(ctx).
 		GetAll()
 	if err != nil {

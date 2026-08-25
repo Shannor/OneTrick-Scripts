@@ -115,6 +115,10 @@ func main() {
 	} else {
 		l.Info("received sessions to process", "sessions", len(sessions))
 		for i, session := range sessions {
+			if session.Status != nil && *session.Status == SessionComplete {
+				l.Info("[SKIP]: session is already completed", "session", session.ID)
+				continue
+			}
 
 			membershipType, membershipID, err := GetMembershipType(ctx, db, session.UserID)
 			if err != nil {
