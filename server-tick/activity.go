@@ -76,11 +76,6 @@ func GetAllPVP(ctx context.Context, client *bungie.ClientWithResponses, db *fire
 			modeIDs[int64(definition.DirectActivityModeHash)] = true
 		}
 	}
-	for _, period := range source {
-		if period.ActivityDetails != nil && period.ActivityDetails.Mode != nil {
-			modeIDs[int64(*period.ActivityDetails.Mode)] = true
-		}
-	}
 	var ids []int64
 	for ID := range modeIDs {
 		ids = append(ids, ID)
