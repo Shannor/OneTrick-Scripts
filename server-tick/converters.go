@@ -253,7 +253,6 @@ func TransformPeriodGroups(period []bungie.StatsPeriodGroup, activities map[stri
 	for _, group := range period {
 		r := TransformPeriodGroup(&group, activities, directorDefinitions, modes)
 		if r == nil {
-			slog.Warn("period group returned nil")
 			continue
 		}
 		result = append(result, *r)
@@ -276,6 +275,24 @@ func TransformPeriodGroup(period *bungie.StatsPeriodGroup, activities map[string
 		slog.Warn("Activity Directory not found in manifest", "directorActivityHash", *period.ActivityDetails.DirectorActivityHash)
 		return nil
 	}
+
+	// Exclude generic Private Matches unless the activity is Iron Banner or Tribute
+	if period.ActivityDetails != nil && period.ActivityDetails.IsPrivate != nil && *period.ActivityDetails.IsPrivate {
+		dirNameLower := strings.ToLower(directorDefinition.DisplayProperties.Name)
+		defNameLower := strings.ToLower(definition.DisplayProperties.Name)
+		isTributeOrIB := strings.Contains(dirNameLower, "tribute") ||
+			strings.Contains(dirNameLower, "iron banner") ||
+			strings.Contains(defNameLower, "tribute") ||
+			strings.Contains(defNameLower, "iron banner")
+		if !isTributeOrIB {
+			slog.Info("skipping private match that is not Iron Banner or Tribute",
+				"instanceId", *period.ActivityDetails.InstanceId,
+				"directorActivity", directorDefinition.DisplayProperties.Name,
+			)
+			return nil
+		}
+	}
+
 	activityMode, ok := modes[strconv.Itoa(directorDefinition.DirectActivityModeHash)]
 	if !ok && period.ActivityDetails.Mode != nil {
 		activityMode = modes[strconv.Itoa(int(*period.ActivityDetails.Mode))]
