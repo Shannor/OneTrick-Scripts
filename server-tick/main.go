@@ -107,6 +107,7 @@ const (
 
 func main() {
 	setupLogging()
+	tickStartTime := time.Now()
 	config, err := configFromEnv()
 	if err != nil {
 		slog.Error("failed to get config", "error", err)
@@ -155,6 +156,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	var (
+		sessionsProcessed       int
+		sessionsSkipped         int
+		sessionsStaleEnded      int
+		sessionsStaleDeleted    int
+		sessionsInactiveEnded   int
+		sessionsInactiveDeleted int
+		sessionsErrored         int
+		loadoutsSaved           int
+		loadoutsFailed          int
+		activitiesFoundTotal    int
+		aggregatesAddedTotal    int
+		errorsTotal             int
+	)
+
 	sessions, err := GetSessions(ctx, db)
 	if err != nil {
 		l.Error("failed to get sessions", "error", err)
@@ -166,34 +182,46 @@ func main() {
 	} else {
 		l.Info("received sessions to process", "sessions", len(sessions))
 		for i, session := range sessions {
+			sessionStartTime := time.Now()
 			isCompleted := session.Status != nil && *session.Status == SessionComplete
 
 			membershipType, membershipID, err := GetMembershipType(ctx, db, session.UserID)
 			if err != nil {
-				l.Error("failed to fetch membership type", "error", err)
+				sessionsErrored++
+				errorsTotal++
+				l.Error("failed to fetch membership type", "error", err, "sessionId", session.ID)
 				continue
 			}
 
-			// This could be moved to something else in the future maybe. It's not super necessary
-			// that it is done here before the rest of the logic. Just that it is done
-			ll := l.With("session", session.ID, "count", i)
+			ll := l.With("session", session.ID, "count", i, "userId", session.UserID)
+
 			if !config.SkipSave {
 				if config.DryRun {
 					ll.Info("[DRY-RUN] would save loadout")
 				} else {
 					ll.Info("starting to save loadout")
-					startTime := time.Now()
+					saveStart := time.Now()
 					_, err = Save(ctx, db, cli, session.UserID, membershipID, session.CharacterID)
+					loadoutDuration := time.Since(saveStart)
 					if err != nil {
-						ll.Warn("failed to save loadout", "error", err)
+						loadoutsFailed++
+						errorsTotal++
+						ll.Warn("failed to save loadout",
+							"error", err,
+							"loadoutDurationMs", loadoutDuration.Milliseconds(),
+						)
 						continue
 					}
-					ll.Info("saved loadout", "loadoutDuration", time.Since(startTime))
+					loadoutsSaved++
+					ll.Info("saved loadout",
+						"loadoutDurationMs", loadoutDuration.Milliseconds(),
+						"loadoutDurationSec", loadoutDuration.Seconds(),
+					)
 				}
 			}
+
 			ll.Info("starting to get pvp games")
-			startTime := time.Now()
-			// Activity history should be shared
+			pvpStart := time.Now()
 			activityHistories, err := GetAllPVP(
 				ctx,
 				cli,
@@ -204,14 +232,27 @@ func main() {
 				2,
 				0,
 			)
+			pvpDuration := time.Since(pvpStart)
 			if err != nil {
-				ll.Error("[SKIP]: failed to get activities", "error", err)
+				sessionsErrored++
+				errorsTotal++
+				ll.Error("[SKIP]: failed to get activities",
+					"error", err,
+					"pvpDurationMs", pvpDuration.Milliseconds(),
+				)
 				continue
 			}
-			ll.Info("got pvp response", "pvpDuration", time.Since(startTime))
+			ll.Info("got pvp response",
+				"pvpDurationMs", pvpDuration.Milliseconds(),
+				"pvpDurationSec", pvpDuration.Seconds(),
+				"activitiesFetched", len(activityHistories),
+			)
 
 			if len(activityHistories) == 0 {
-				ll.Warn("[SKIP]: no history found for user")
+				sessionsSkipped++
+				ll.Warn("[SKIP]: no history found for user",
+					"sessionDurationMs", time.Since(sessionStartTime).Milliseconds(),
+				)
 				continue
 			}
 
@@ -222,30 +263,36 @@ func main() {
 				if !isCompleted && IsStaleSession(session) {
 					if config.DryRun {
 						if len(session.AggregateIDs) == 0 {
+							sessionsStaleDeleted++
 							ll.Info("[DRY-RUN] would delete stale session (no activities)")
 						} else {
+							sessionsStaleEnded++
 							ll.Info("[DRY-RUN] would end stale session")
 						}
 					} else {
 						err := EndOrDeleteSession(ctx, db, session)
 						if err != nil {
+							sessionsErrored++
+							errorsTotal++
 							ll.Error("failed to process stale session", "error", err)
 							continue
 						}
 						if len(session.AggregateIDs) == 0 {
+							sessionsStaleDeleted++
 							ll.Info("session is stale with no activities. Deleted session")
 						} else {
+							sessionsStaleEnded++
 							ll.Info("session is stale. Ending session")
 						}
 					}
 					continue
 				}
+				sessionsSkipped++
 				continue
 			}
 
 			IDs := make([]string, 0)
 			histories := make([]ActivityHistory, 0)
-			// Only choose activities that happened after starting the session
 			gracePeriod := session.StartedAt.Add(-15 * time.Minute)
 			for _, activity := range activityHistories {
 				if activity.Period.After(gracePeriod) {
@@ -259,31 +306,41 @@ func main() {
 				if !isCompleted && IsInactiveSession(session) {
 					if config.DryRun {
 						if len(session.AggregateIDs) == 0 {
+							sessionsInactiveDeleted++
 							ll.Info("[DRY-RUN] would delete inactive session (no activities)")
 						} else {
+							sessionsInactiveEnded++
 							ll.Info("[DRY-RUN] would end inactive session")
 						}
 					} else {
 						err := EndOrDeleteSession(ctx, db, session)
 						if err != nil {
+							sessionsErrored++
+							errorsTotal++
 							ll.Error("failed to process inactive session", "error", err)
 							continue
 						}
 						if len(session.AggregateIDs) == 0 {
+							sessionsInactiveDeleted++
 							ll.Info("session is inactive with no activities. Deleted session")
 						} else {
+							sessionsInactiveEnded++
 							ll.Info("session is inactive. Ending session")
 						}
 					}
 					continue
 				}
+				sessionsSkipped++
 				continue
 			}
 
-			ll.Info("Activities Found", "IDs", IDs)
+			activitiesFoundTotal += len(IDs)
+			ll.Info("Activities Found", "IDs", IDs, "newActivitiesCount", len(IDs))
 
 			existingAggs, err := GetAggregatesByActivity(ctx, db, IDs)
 			if err != nil {
+				sessionsErrored++
+				errorsTotal++
 				ll.Error("failed to fetch aggregates by the provided IDs", "error", err, "activityIDs", IDs)
 				continue
 			}
@@ -300,20 +357,31 @@ func main() {
 				agg := existingAggMap[history.InstanceID]
 
 				link := LookupLink(agg, session.CharacterID)
-				// Already attempted to link this character to this activity so we can skip it
 				if link != nil && link.SessionID != nil {
 					ll.Info("Already linked to this activity", "activityId", history.InstanceID)
 					continue
 				}
 
+				perfStart := time.Now()
 				performances, err := GetPerformances(ctx, cli, db, history.InstanceID, session.CharacterID)
+				perfDuration := time.Since(perfStart)
 				if err != nil {
-					ll.Error("failed to fetch performances", "error", err)
+					errorsTotal++
+					ll.Error("failed to fetch performances",
+						"error", err,
+						"activityId", history.InstanceID,
+						"perfDurationMs", perfDuration.Milliseconds(),
+					)
 					continue
 				}
+				ll.Info("fetched performance",
+					"activityId", history.InstanceID,
+					"perfDurationMs", perfDuration.Milliseconds(),
+				)
+
 				performance, ok := performances[session.CharacterID]
 				if !ok {
-					ll.Warn("no performance found for member", "userId", session.UserID)
+					ll.Warn("no performance found for member", "userId", session.UserID, "activityId", history.InstanceID)
 					continue
 				}
 
@@ -323,6 +391,7 @@ func main() {
 					continue
 				}
 
+				aggStart := time.Now()
 				a, err := SetAggregate(
 					ctx,
 					db,
@@ -333,23 +402,39 @@ func main() {
 					performance,
 					session.ID,
 				)
+				aggDuration := time.Since(aggStart)
 				if err != nil {
-					ll.Error("failed to add data to aggregate", "error", err)
+					errorsTotal++
+					ll.Error("failed to add data to aggregate",
+						"error", err,
+						"activityId", history.InstanceID,
+						"aggDurationMs", aggDuration.Milliseconds(),
+					)
 					continue
 				}
+				ll.Info("set aggregate successfully",
+					"activityId", history.InstanceID,
+					"aggregateId", a.ID,
+					"aggDurationMs", aggDuration.Milliseconds(),
+				)
 				aggIDs = append(aggIDs, a.ID)
 			}
 
-			// Only update the session if we actually processed new activities
 			if len(aggIDs) == 0 {
-				ll.Info("[SKIP]: All activities already linked. No session update needed")
+				sessionsSkipped++
+				ll.Info("[SKIP]: All activities already linked. No session update needed",
+					"sessionDurationMs", time.Since(sessionStartTime).Milliseconds(),
+				)
 				continue
 			}
 
 			if config.DryRun {
+				sessionsProcessed++
+				aggregatesAddedTotal += len(aggIDs)
 				ll.Info("[DRY-RUN] would update session with last activity and aggregate IDs",
 					"aggregateIds", aggIDs,
 					"latestActivityId", latest.InstanceID,
+					"sessionDurationMs", time.Since(sessionStartTime).Milliseconds(),
 				)
 				continue
 			}
@@ -357,6 +442,7 @@ func main() {
 			if !isCompleted {
 				err = SetLastActivity(ctx, db, session.ID, latest.InstanceID)
 				if err != nil {
+					errorsTotal++
 					ll.Warn("failed to save last activity for session. Continuing on", "error", err)
 				}
 			}
@@ -365,31 +451,87 @@ func main() {
 
 			err = AddAggregateIDs(ctx, db, session.ID, aggIDs)
 			if err != nil {
+				sessionsErrored++
+				errorsTotal++
 				ll.Error("Failed to add aggregate IDs to session", "error", err)
 				continue
 			}
 			ll.Info("Added aggregate IDs to session", "aggregates", aggIDs)
 
 			session.AggregateIDs = append(session.AggregateIDs, aggIDs...)
+			summaryStart := time.Now()
 			summary, err := ComputeSessionSummary(ctx, db, session)
+			summaryDuration := time.Since(summaryStart)
 			if err != nil {
-				ll.Error("Failed to compute session summary after adding aggregates", "error", err)
+				errorsTotal++
+				ll.Error("Failed to compute session summary after adding aggregates",
+					"error", err,
+					"summaryDurationMs", summaryDuration.Milliseconds(),
+				)
 			} else {
 				err = UpdateSessionSummary(ctx, db, session.ID, summary)
 				if err != nil {
-					ll.Error("Failed to update session summary after adding aggregates", "error", err)
+					errorsTotal++
+					ll.Error("Failed to update session summary after adding aggregates",
+						"error", err,
+						"summaryDurationMs", summaryDuration.Milliseconds(),
+					)
 				} else {
-					ll.Info("Updated session summary", "sessionId", session.ID)
+					ll.Info("Updated session summary",
+						"sessionId", session.ID,
+						"summaryDurationMs", summaryDuration.Milliseconds(),
+					)
 				}
 			}
+
+			sessionsProcessed++
+			aggregatesAddedTotal += len(aggIDs)
+			ll.Info("session_processed",
+				"sessionId", session.ID,
+				"userId", session.UserID,
+				"characterId", session.CharacterID,
+				"activitiesFound", len(IDs),
+				"aggregatesAdded", len(aggIDs),
+				"sessionDurationMs", time.Since(sessionStartTime).Milliseconds(),
+			)
 		}
 		l.Info("finished going through all sessions")
 	}
 
+	cleanupStart := time.Now()
 	cleaned, err := CleanupEmptyCompletedSessions(ctx, db, config.DryRun)
+	cleanupDuration := time.Since(cleanupStart)
 	if err != nil {
-		l.Error("failed to cleanup older empty completed sessions", "error", err)
+		errorsTotal++
+		l.Error("failed to cleanup older empty completed sessions",
+			"error", err,
+			"cleanupDurationMs", cleanupDuration.Milliseconds(),
+		)
 	} else if cleaned > 0 {
-		l.Info("completed cleanup of older empty sessions", "count", cleaned)
+		l.Info("completed cleanup of older empty sessions",
+			"count", cleaned,
+			"cleanupDurationMs", cleanupDuration.Milliseconds(),
+		)
 	}
+
+	tickDuration := time.Since(tickStartTime)
+	l.Info("server_tick_completed",
+		slog.Int64("tickDurationMs", tickDuration.Milliseconds()),
+		slog.Float64("tickDurationSec", tickDuration.Seconds()),
+		slog.Int("totalSessions", len(sessions)),
+		slog.Int("sessionsProcessed", sessionsProcessed),
+		slog.Int("sessionsSkipped", sessionsSkipped),
+		slog.Int("sessionsStaleEnded", sessionsStaleEnded),
+		slog.Int("sessionsStaleDeleted", sessionsStaleDeleted),
+		slog.Int("sessionsInactiveEnded", sessionsInactiveEnded),
+		slog.Int("sessionsInactiveDeleted", sessionsInactiveDeleted),
+		slog.Int("sessionsErrored", sessionsErrored),
+		slog.Int("emptySessionsCleaned", cleaned),
+		slog.Int("loadoutsSaved", loadoutsSaved),
+		slog.Int("loadoutsFailed", loadoutsFailed),
+		slog.Int("activitiesFoundTotal", activitiesFoundTotal),
+		slog.Int("aggregatesAddedTotal", aggregatesAddedTotal),
+		slog.Int("errorsTotal", errorsTotal),
+		slog.Bool("dryRun", config.DryRun),
+	)
 }

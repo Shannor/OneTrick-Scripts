@@ -276,10 +276,17 @@ func TransformPeriodGroup(period *bungie.StatsPeriodGroup, activities map[string
 		slog.Warn("Activity Directory not found in manifest", "directorActivityHash", *period.ActivityDetails.DirectorActivityHash)
 		return nil
 	}
-	activityMode := modes[strconv.Itoa(directorDefinition.DirectActivityModeHash)]
+	activityMode, ok := modes[strconv.Itoa(directorDefinition.DirectActivityModeHash)]
+	if !ok && period.ActivityDetails.Mode != nil {
+		activityMode = modes[strconv.Itoa(int(*period.ActivityDetails.Mode))]
+	}
 	mode := ActivityModeTypeToString((*bungie.CurrentActivityModeType)(period.ActivityDetails.Mode))
 	if directorDefinition.DisplayProperties.Name == "Iron Banner: Tribute" || strings.Contains(strings.ToLower(directorDefinition.DisplayProperties.Name), "tribute") {
 		mode = "Iron Banner Tribute"
+	}
+	activityIcon := ""
+	if activityMode.DisplayProperties.Icon != "" {
+		activityIcon = setBaseBungieURL(&activityMode.DisplayProperties.Icon)
 	}
 	return &ActivityHistory{
 		ActivityHash: *uintToInt64(period.ActivityDetails.DirectorActivityHash),
@@ -291,7 +298,7 @@ func TransformPeriodGroup(period *bungie.StatsPeriodGroup, activities map[string
 		Description:  definition.DisplayProperties.Description,
 		Activity:     directorDefinition.DisplayProperties.Name,
 		ImageURL:     setBaseBungieURL(&definition.PgcrImage),
-		ActivityIcon: setBaseBungieURL(&activityMode.DisplayProperties.Icon),
+		ActivityIcon: activityIcon,
 		Period:       *period.Period,
 	}
 }

@@ -7,13 +7,16 @@ import (
 )
 
 func GetAllToStructs[T any](docs []*firestore.DocumentSnapshot) ([]T, error) {
-	result := make([]T, len(docs))
-	for i, doc := range docs {
+	result := make([]T, 0, len(docs))
+	for _, doc := range docs {
+		if !doc.Exists() {
+			continue
+		}
 		var item T
 		if err := doc.DataTo(&item); err != nil {
 			return nil, fmt.Errorf("failed to convert doc %s: %w", doc.Ref.ID, err)
 		}
-		result[i] = item
+		result = append(result, item)
 	}
 	return result, nil
 }
