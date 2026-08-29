@@ -20,7 +20,6 @@ type Config struct {
 	DestinyAPIKey string
 	SkipSave      bool
 	DryRun        bool
-	Backfill      bool
 	ProjectID     string
 	EmulatorHost  string
 }
@@ -57,13 +56,11 @@ func configFromEnv() (Config, error) {
 	fs.SetOutput(io.Discard)
 
 	var (
-		backfillFlag bool
 		useEmulator  bool
 		emulatorHost string
 		projIDFlag   string
 		dryRunFlag   bool
 	)
-	fs.BoolVar(&backfillFlag, "backfill-summaries", false, "Calculate and backfill SessionSummary for completed sessions")
 	fs.BoolVar(&useEmulator, "use-emulator", false, "Use local Firestore emulator/docker DB")
 	fs.StringVar(&emulatorHost, "emulator-host", "", "Firestore emulator host:port (e.g. 0.0.0.0:8081)")
 	fs.StringVar(&projIDFlag, "project-id", "", "Google Cloud / Firestore project ID (defaults to gruntt-destiny)")
@@ -73,11 +70,6 @@ func configFromEnv() (Config, error) {
 
 	if dryRunFlag {
 		config.DryRun = true
-	}
-
-	backfillEnv, _ := stringToInt(os.Getenv("BACKFILL_SUMMARIES"))
-	if backfillFlag || backfillEnv == 1 {
-		config.Backfill = true
 	}
 
 	config.ProjectID = defaultProjectID
@@ -392,16 +384,6 @@ func main() {
 			}
 		}
 		l.Info("finished going through all sessions")
-	}
-
-	if config.Backfill {
-		l.Info("starting session summary backfill")
-		backfilled, err := BackfillSessionSummaries(ctx, db, config.DryRun)
-		if err != nil {
-			l.Error("failed to backfill session summaries", "error", err)
-		} else {
-			l.Info("completed session summary backfill", "count", backfilled)
-		}
 	}
 
 	cleaned, err := CleanupEmptyCompletedSessions(ctx, db, config.DryRun)

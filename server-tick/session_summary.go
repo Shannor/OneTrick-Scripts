@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"math"
 	"sort"
 	"strconv"
@@ -290,95 +289,4 @@ func UpdateSessionSummary(ctx context.Context, db *firestore.Client, sessionID s
 		},
 	})
 	return err
-}
-
-// BackfillSessionSummaries iterates over completed sessions missing sessionSummary, computes their summary, and updates Firestore.
-func BackfillSessionSummaries(ctx context.Context, db *firestore.Client, dryRun bool) (int, error) {
-	slog.Info("starting session summary backfill search", "collection", SessionCollection)
-	docs, err := db.Collection(SessionCollection).
-		Where("status", "==", SessionComplete).
-		Documents(ctx).
-		GetAll()
-	if err != nil {
-		return 0, fmt.Errorf("failed to fetch completed sessions for backfill: %w", err)
-	}
-
-	totalCompleted := len(docs)
-	slog.Info("fetched completed sessions for backfill evaluation", "totalCompletedSessions", totalCompleted)
-
-	backfilledCount := 0
-	alreadyHasSummaryCount := 0
-	noAggregatesCount := 0
-	errorCount := 0
-
-	for i, doc := range docs {
-		var s Session
-		if err := doc.DataTo(&s); err != nil {
-			slog.Error("failed to parse session for backfill", "docId", doc.Ref.ID, "error", err)
-			errorCount++
-			continue
-		}
-
-		if s.Summary != nil {
-			alreadyHasSummaryCount++
-			continue
-		}
-
-		if len(s.AggregateIDs) == 0 {
-			noAggregatesCount++
-			slog.Debug("skipping empty completed session during backfill", "sessionId", s.ID)
-			continue
-		}
-
-		l := slog.With(
-			"progress", fmt.Sprintf("%d/%d", i+1, totalCompleted),
-			"sessionId", s.ID,
-			"characterId", s.CharacterID,
-			"aggregateCount", len(s.AggregateIDs),
-		)
-
-		summary, err := ComputeSessionSummary(ctx, db, s)
-		if err != nil {
-			l.Error("failed to compute summary for backfill", "error", err)
-			errorCount++
-			continue
-		}
-
-		summaryDetails := slog.Group("summary",
-			"matches", summary.TotalMatches,
-			"wins", summary.Wins,
-			"losses", summary.Losses,
-			"winRate", summary.WinRate,
-			"kills", summary.Kills,
-			"deaths", summary.Deaths,
-			"assists", summary.Assists,
-			"kdRatio", summary.KDRatio,
-			"kdaRatio", summary.KDARatio,
-			"modesPlayed", summary.ModesPlayed,
-			"topWeaponsCount", len(summary.TopWeapons),
-		)
-
-		if dryRun {
-			l.Info("[DRY-RUN] would backfill session summary", summaryDetails)
-		} else {
-			if err := UpdateSessionSummary(ctx, db, s.ID, summary); err != nil {
-				l.Error("failed to update session summary during backfill", "error", err)
-				errorCount++
-				continue
-			}
-			l.Info("successfully backfilled session summary", summaryDetails)
-		}
-		backfilledCount++
-	}
-
-	slog.Info("session summary backfill finished",
-		"totalCompletedInspected", totalCompleted,
-		"backfilled", backfilledCount,
-		"alreadyHasSummary", alreadyHasSummaryCount,
-		"noAggregates", noAggregatesCount,
-		"errors", errorCount,
-		"dryRun", dryRun,
-	)
-
-	return backfilledCount, nil
 }
