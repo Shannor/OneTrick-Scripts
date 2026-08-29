@@ -139,16 +139,22 @@ func EndOrDeleteSession(ctx context.Context, db *firestore.Client, s Session) er
 	if len(s.AggregateIDs) == 0 {
 		return DeleteSession(ctx, db, s.ID)
 	}
-	return EndSession(ctx, db, s.ID)
+	return EndSession(ctx, db, s)
 }
 
-func EndSession(ctx context.Context, db *firestore.Client, ID string) error {
+func EndSession(ctx context.Context, db *firestore.Client, s Session) error {
 	completedBy := AuditField{
 		ID:       "system",
 		Username: "system",
 	}
 	now := time.Now()
-	_, err := db.Collection(SessionCollection).Doc(ID).Update(ctx, []firestore.Update{
+
+	summary, err := ComputeSessionSummary(ctx, db, s)
+	if err != nil {
+		slog.Error("failed to compute session summary on ending session", "sessionId", s.ID, "error", err)
+	}
+
+	updates := []firestore.Update{
 		{
 			Path:  "completedBy",
 			Value: completedBy,
@@ -165,7 +171,15 @@ func EndSession(ctx context.Context, db *firestore.Client, ID string) error {
 			Path:  "updatedAt",
 			Value: now,
 		},
-	})
+	}
+	if summary != nil {
+		updates = append(updates, firestore.Update{
+			Path:  "sessionSummary",
+			Value: summary,
+		})
+	}
+
+	_, err = db.Collection(SessionCollection).Doc(s.ID).Update(ctx, updates)
 	if err != nil {
 		return fmt.Errorf("failed to end session: %v", err)
 	}

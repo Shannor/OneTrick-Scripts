@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log/slog"
 	"net/http"
 	"os"
@@ -18,6 +19,9 @@ type Config struct {
 	DestinyAPIKey string
 	SkipSave      bool
 	DryRun        bool
+	Backfill      bool
+	ProjectID     string
+	EmulatorHost  string
 }
 
 func configFromEnv() (Config, error) {
@@ -47,6 +51,52 @@ func configFromEnv() (Config, error) {
 	if dryRun == 1 {
 		config.DryRun = true
 	}
+
+	var (
+		backfillFlag bool
+		useEmulator  bool
+		emulatorHost string
+		projIDFlag   string
+		dryRunFlag   bool
+	)
+	flag.BoolVar(&backfillFlag, "backfill-summaries", false, "Calculate and backfill SessionSummary for completed sessions")
+	flag.BoolVar(&useEmulator, "use-emulator", false, "Use local Firestore emulator/docker DB")
+	flag.StringVar(&emulatorHost, "emulator-host", "", "Firestore emulator host:port (e.g. 0.0.0.0:8081)")
+	flag.StringVar(&projIDFlag, "project-id", "", "Google Cloud / Firestore project ID (defaults to gruntt-destiny)")
+	flag.BoolVar(&dryRunFlag, "dry-run", false, "Run without performing any writes")
+
+	if !flag.Parsed() {
+		flag.Parse()
+	}
+
+	if dryRunFlag {
+		config.DryRun = true
+	}
+
+	backfillEnv, _ := stringToInt(os.Getenv("BACKFILL_SUMMARIES"))
+	if backfillFlag || backfillEnv == 1 {
+		config.Backfill = true
+	}
+
+	config.ProjectID = defaultProjectID
+	if projID := os.Getenv("FIRESTORE_PROJECT_ID"); projID != "" {
+		config.ProjectID = projID
+	} else if projID := os.Getenv("PROJECT_ID"); projID != "" {
+		config.ProjectID = projID
+	}
+	if projIDFlag != "" {
+		config.ProjectID = projIDFlag
+	}
+
+	envEmulatorHost := os.Getenv("FIRESTORE_EMULATOR_HOST")
+	if emulatorHost != "" {
+		config.EmulatorHost = emulatorHost
+	} else if envEmulatorHost != "" {
+		config.EmulatorHost = envEmulatorHost
+	} else if useEmulator {
+		config.EmulatorHost = "0.0.0.0:8081"
+	}
+
 	return config, nil
 }
 
@@ -58,7 +108,7 @@ func stringToInt(s string) (int64, error) {
 }
 
 const (
-	projectID = "gruntt-destiny"
+	defaultProjectID = "gruntt-destiny"
 )
 
 func main() {
@@ -74,7 +124,14 @@ func main() {
 	}
 	ctx := context.Background()
 
-	db, err := firestore.NewClient(ctx, projectID)
+	if config.EmulatorHost != "" {
+		os.Setenv("FIRESTORE_EMULATOR_HOST", config.EmulatorHost)
+		l.Info("using local Firestore DB / emulator", "host", config.EmulatorHost, "projectId", config.ProjectID)
+	} else {
+		l.Info("connecting to production Firestore DB", "projectId", config.ProjectID)
+	}
+
+	db, err := firestore.NewClient(ctx, config.ProjectID)
 	if err != nil {
 		l.Error("failed to create client", "error", err)
 		os.Exit(1)
@@ -318,8 +375,31 @@ func main() {
 				continue
 			}
 			ll.Info("Added aggregate IDs to session", "aggregates", aggIDs)
+
+			session.AggregateIDs = append(session.AggregateIDs, aggIDs...)
+			summary, err := ComputeSessionSummary(ctx, db, session)
+			if err != nil {
+				ll.Error("Failed to compute session summary after adding aggregates", "error", err)
+			} else {
+				err = UpdateSessionSummary(ctx, db, session.ID, summary)
+				if err != nil {
+					ll.Error("Failed to update session summary after adding aggregates", "error", err)
+				} else {
+					ll.Info("Updated session summary", "sessionId", session.ID)
+				}
+			}
 		}
 		l.Info("finished going through all sessions")
+	}
+
+	if config.Backfill {
+		l.Info("starting session summary backfill")
+		backfilled, err := BackfillSessionSummaries(ctx, db, config.DryRun)
+		if err != nil {
+			l.Error("failed to backfill session summaries", "error", err)
+		} else {
+			l.Info("completed session summary backfill", "count", backfilled)
+		}
 	}
 
 	cleaned, err := CleanupEmptyCompletedSessions(ctx, db, config.DryRun)

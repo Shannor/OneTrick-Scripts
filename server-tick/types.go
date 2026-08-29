@@ -616,21 +616,42 @@ const (
 	RecordDefinitionCollection ManifestCollection = "d2RecordDefinitions"
 )
 
+type SessionWeaponSummary struct {
+	Name  string `json:"name" firestore:"name"`
+	Icon  string `json:"icon,omitempty" firestore:"icon,omitempty"`
+	Kills int    `json:"kills" firestore:"kills"`
+}
+
+type SessionSummary struct {
+	TotalMatches int                    `json:"totalMatches" firestore:"totalMatches"`
+	Wins         int                    `json:"wins" firestore:"wins"`
+	Losses       int                    `json:"losses" firestore:"losses"`
+	WinRate      float64                `json:"winRate" firestore:"winRate"`
+	Kills        int                    `json:"kills" firestore:"kills"`
+	Deaths       int                    `json:"deaths" firestore:"deaths"`
+	Assists      int                    `json:"assists" firestore:"assists"`
+	KDRatio      float64                `json:"kdRatio" firestore:"kdRatio"`
+	KDARatio     float64                `json:"kdaRatio" firestore:"kdaRatio"`
+	ModesPlayed  []string               `json:"modesPlayed" firestore:"modesPlayed"`
+	TopWeapons   []SessionWeaponSummary `json:"topWeapons" firestore:"topWeapons"`
+}
+
 type Session struct {
 	// AggregateIDs List of aggregates linked to this session
-	AggregateIDs       []string       `firestore:"aggregateIds" json:"aggregateIds"`
-	CharacterID        string         `firestore:"characterId" json:"characterId"`
-	CompletedAt        *time.Time     `firestore:"completedAt" json:"completedAt,omitempty"`
-	CompletedBy        *AuditField    `firestore:"completedBy" json:"completedBy,omitempty"`
-	ID                 string         `firestore:"id" json:"id"`
-	LastSeenActivityID *string        `firestore:"lastSeenActivityId" json:"lastSeenActivityId,omitempty"`
-	LastSeenTimestamp  *time.Time     `firestore:"lastSeenTimestamp" json:"lastSeenTimestamp,omitempty"`
-	Name               *string        `firestore:"name" json:"name,omitempty"`
-	StartedAt          time.Time      `firestore:"startedAt" json:"startedAt"`
-	StartedBy          *AuditField    `firestore:"startedBy" json:"startedBy,omitempty"`
-	Status             *SessionStatus `firestore:"status" json:"status,omitempty"`
-	UserID             string         `firestore:"userId" json:"userId"`
-	UpdatedAt          *time.Time     `firestore:"updatedAt" json:"updatedAt"`
+	AggregateIDs       []string        `firestore:"aggregateIds" json:"aggregateIds"`
+	CharacterID        string          `firestore:"characterId" json:"characterId"`
+	CompletedAt        *time.Time      `firestore:"completedAt" json:"completedAt,omitempty"`
+	CompletedBy        *AuditField     `firestore:"completedBy" json:"completedBy,omitempty"`
+	ID                 string          `firestore:"id" json:"id"`
+	LastSeenActivityID *string         `firestore:"lastSeenActivityId" json:"lastSeenActivityId,omitempty"`
+	LastSeenTimestamp  *time.Time      `firestore:"lastSeenTimestamp" json:"lastSeenTimestamp,omitempty"`
+	Name               *string         `firestore:"name" json:"name,omitempty"`
+	StartedAt          time.Time       `firestore:"startedAt" json:"startedAt"`
+	StartedBy          *AuditField     `firestore:"startedBy" json:"startedBy,omitempty"`
+	Status             *SessionStatus  `firestore:"status" json:"status,omitempty"`
+	Summary            *SessionSummary `firestore:"sessionSummary,omitempty" json:"summary,omitempty"`
+	UserID             string          `firestore:"userId" json:"userId"`
+	UpdatedAt          *time.Time      `firestore:"updatedAt" json:"updatedAt"`
 }
 
 const (

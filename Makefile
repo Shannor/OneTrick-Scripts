@@ -1,4 +1,4 @@
-.PHONY: help deploy-server-tick deploy-migration execute-server-tick execute-migration
+.PHONY: help deploy-server-tick deploy-migration execute-server-tick execute-migration run-server-tick-local run-server-tick-local-dry backfill-summaries-local backfill-summaries-local-dry backfill-summaries-prod backfill-summaries-prod-dry
 
 # ====================================================================================
 # Variables
@@ -6,6 +6,7 @@
 
 PROJECT_ID   := gruntt-destiny
 REGION       := us-central1
+EMULATOR_HOST ?= 0.0.0.0:8081
 
 # Server Tick specific variables
 SERVER_TICK_NAME         := server-tick
@@ -54,3 +55,27 @@ deploy-migration:
 		--max-retries $(MIGRATION_RETRIES) \
 		--region $(REGION) \
 		--project=$(PROJECT_ID)
+
+## Runs server-tick summary backfill against local Firestore docker DB.
+backfill-summaries-local:
+	cd $(SERVER_TICK_SOURCE) && go run . -use-emulator -emulator-host $(EMULATOR_HOST) -backfill-summaries
+
+## Runs server-tick summary backfill in dry-run mode against local Firestore docker DB.
+backfill-summaries-local-dry:
+	cd $(SERVER_TICK_SOURCE) && go run . -use-emulator -emulator-host $(EMULATOR_HOST) -backfill-summaries -dry-run
+
+## Runs server-tick against local Firestore docker DB.
+run-server-tick-local:
+	cd $(SERVER_TICK_SOURCE) && go run . -use-emulator -emulator-host $(EMULATOR_HOST)
+
+## Runs server-tick in dry-run mode against local Firestore docker DB.
+run-server-tick-local-dry:
+	cd $(SERVER_TICK_SOURCE) && go run . -use-emulator -emulator-host $(EMULATOR_HOST) -dry-run
+
+## Runs server-tick summary backfill against production Firestore DB.
+backfill-summaries-prod:
+	cd $(SERVER_TICK_SOURCE) && go run . -backfill-summaries
+
+## Runs server-tick summary backfill in dry-run mode against production Firestore DB.
+backfill-summaries-prod-dry:
+	cd $(SERVER_TICK_SOURCE) && go run . -backfill-summaries -dry-run

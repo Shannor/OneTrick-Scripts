@@ -111,5 +111,6 @@ go.work.sum
 
 # env file
 .env
+.DS_Store
 /migration/Migration
 /server-tick/Server_Tick
