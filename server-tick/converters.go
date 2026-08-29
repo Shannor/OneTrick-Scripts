@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"serverTick/bungie"
 	"strconv"
+	"strings"
 )
 
 func TransformItemToDetails(
@@ -277,6 +278,9 @@ func TransformPeriodGroup(period *bungie.StatsPeriodGroup, activities map[string
 	}
 	activityMode := modes[strconv.Itoa(directorDefinition.DirectActivityModeHash)]
 	mode := ActivityModeTypeToString((*bungie.CurrentActivityModeType)(period.ActivityDetails.Mode))
+	if directorDefinition.DisplayProperties.Name == "Iron Banner: Tribute" || strings.Contains(strings.ToLower(directorDefinition.DisplayProperties.Name), "tribute") {
+		mode = "Iron Banner Tribute"
+	}
 	return &ActivityHistory{
 		ActivityHash: *uintToInt64(period.ActivityDetails.DirectorActivityHash),
 		InstanceID:   *period.ActivityDetails.InstanceId,
@@ -421,7 +425,7 @@ func ActivityModeTypeToString(modeType *bungie.CurrentActivityModeType) string {
 	case bungie.CurrentActivityModeTypeIronBannerClash:
 		return "Iron Banner Clash"
 	case bungie.CurrentActivityModeTypeIronBannerSupremacy:
-		return "Iron Banner Supremacy"
+		return "Iron Banner Tribute / Supremacy"
 	case bungie.CurrentActivityModeTypePrivateMatchesSurvival:
 		return "Private Matches Survival"
 	case bungie.CurrentActivityModeTypeTrialsSurvival:
