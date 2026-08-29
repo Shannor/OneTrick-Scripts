@@ -114,3 +114,4 @@ go.work.sum
 .DS_Store
 /migration/Migration
 /server-tick/Server_Tick
+/server-tick/serverTick

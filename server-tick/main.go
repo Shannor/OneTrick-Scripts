@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -52,6 +53,9 @@ func configFromEnv() (Config, error) {
 		config.DryRun = true
 	}
 
+	fs := flag.NewFlagSet("server-tick", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
 	var (
 		backfillFlag bool
 		useEmulator  bool
@@ -59,15 +63,13 @@ func configFromEnv() (Config, error) {
 		projIDFlag   string
 		dryRunFlag   bool
 	)
-	flag.BoolVar(&backfillFlag, "backfill-summaries", false, "Calculate and backfill SessionSummary for completed sessions")
-	flag.BoolVar(&useEmulator, "use-emulator", false, "Use local Firestore emulator/docker DB")
-	flag.StringVar(&emulatorHost, "emulator-host", "", "Firestore emulator host:port (e.g. 0.0.0.0:8081)")
-	flag.StringVar(&projIDFlag, "project-id", "", "Google Cloud / Firestore project ID (defaults to gruntt-destiny)")
-	flag.BoolVar(&dryRunFlag, "dry-run", false, "Run without performing any writes")
+	fs.BoolVar(&backfillFlag, "backfill-summaries", false, "Calculate and backfill SessionSummary for completed sessions")
+	fs.BoolVar(&useEmulator, "use-emulator", false, "Use local Firestore emulator/docker DB")
+	fs.StringVar(&emulatorHost, "emulator-host", "", "Firestore emulator host:port (e.g. 0.0.0.0:8081)")
+	fs.StringVar(&projIDFlag, "project-id", "", "Google Cloud / Firestore project ID (defaults to gruntt-destiny)")
+	fs.BoolVar(&dryRunFlag, "dry-run", false, "Run without performing any writes")
 
-	if !flag.Parsed() {
-		flag.Parse()
-	}
+	_ = fs.Parse(os.Args[1:])
 
 	if dryRunFlag {
 		config.DryRun = true

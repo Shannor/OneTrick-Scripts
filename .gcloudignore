@@ -1,0 +1,6 @@
+.gcloudignore
+.git
+.gitignore
+server-tick/Server_Tick
+migration/Migration
+*.exe
