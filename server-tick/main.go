@@ -229,7 +229,7 @@ func main() {
 				membershipID,
 				membershipType,
 				session.CharacterID,
-				2,
+				5,
 				0,
 			)
 			pvpDuration := time.Since(pvpStart)
