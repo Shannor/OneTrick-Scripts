@@ -685,6 +685,7 @@ func GetActivity(ctx context.Context, db *firestore.Client, hash int64) (*Activi
 
 	doc, err := db.Collection(string(ActivityCollection)).Doc(hashStr).Get(ctx)
 	if err != nil {
+		slog.Warn("manifest definition document not found in Firestore", "collection", string(ActivityCollection), "docId", hashStr, "error", err)
 		return nil, fmt.Errorf("failed to get activity definition: %w", err)
 	}
 
@@ -716,6 +717,7 @@ func GetActivityMode(ctx context.Context, db *firestore.Client, hash int64) (*Ac
 
 	doc, err := db.Collection(string(ActivityModeCollection)).Doc(hashStr).Get(ctx)
 	if err != nil {
+		slog.Warn("manifest definition document not found in Firestore", "collection", string(ActivityModeCollection), "docId", hashStr, "error", err)
 		return nil, fmt.Errorf("failed to get activity mode definition: %w", err)
 	}
 
@@ -761,6 +763,7 @@ func GetItem(ctx context.Context, db *firestore.Client, hash int64) (*ItemDefini
 
 	doc, err := db.Collection(string(ItemDefinitionCollection)).Doc(hashStr).Get(ctx)
 	if err != nil {
+		slog.Warn("manifest definition document not found in Firestore", "collection", string(ItemDefinitionCollection), "docId", hashStr, "error", err)
 		return nil, fmt.Errorf("failed to get item definition: %w", err)
 	}
 
@@ -791,6 +794,7 @@ func GetPerk(ctx context.Context, db *firestore.Client, hash int64) (*PerkDefini
 
 	doc, err := db.Collection(string(SandboxPerkCollection)).Doc(hashStr).Get(ctx)
 	if err != nil {
+		slog.Warn("manifest definition document not found in Firestore", "collection", string(SandboxPerkCollection), "docId", hashStr, "error", err)
 		return nil, fmt.Errorf("failed to get item definition: %w", err)
 	}
 
@@ -833,6 +837,14 @@ func batchedFetch[T any](ctx context.Context, db *firestore.Client, collection M
 		docs, err := db.GetAll(ctx, refs)
 		if err != nil {
 			return nil, err
+		}
+		for _, doc := range docs {
+			if !doc.Exists() {
+				slog.Warn("manifest definition document not found in Firestore",
+					"collection", string(collection),
+					"docId", doc.Ref.ID,
+				)
+			}
 		}
 		items, err := utils.GetAllToStructs[T](docs)
 		if err != nil {
