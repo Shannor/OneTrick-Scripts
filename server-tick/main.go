@@ -248,6 +248,52 @@ func main() {
 				"activitiesFetched", len(activityHistories),
 			)
 
+			if !isCompleted && IsStaleSession(session) {
+				if config.DryRun {
+					if len(session.AggregateIDs) == 0 {
+						sessionsStaleDeleted++
+						ll.Info("[DRY-RUN] would delete stale session (no activities)")
+					} else {
+						sessionsStaleEnded++
+						ll.Info("[DRY-RUN] would end stale session")
+					}
+				} else {
+					err := EndOrDeleteSession(ctx, db, session)
+					if err != nil {
+						sessionsErrored++
+						errorsTotal++
+						ll.Error("failed to process stale session", "error", err)
+						continue
+					}
+					if len(session.AggregateIDs) == 0 {
+						sessionsStaleDeleted++
+						ll.Info("session is stale with no activities. Deleted session")
+					} else {
+						sessionsStaleEnded++
+						ll.Info("session is stale. Ending session")
+					}
+				}
+				continue
+			}
+
+			if !isCompleted && session.LastSeenTimestamp == nil && IsInactiveSession(session) {
+				if config.DryRun {
+					sessionsInactiveDeleted++
+					ll.Info("[DRY-RUN] would delete inactive session (no activities)")
+				} else {
+					err := EndOrDeleteSession(ctx, db, session)
+					if err != nil {
+						sessionsErrored++
+						errorsTotal++
+						ll.Error("failed to process inactive session", "error", err)
+						continue
+					}
+					sessionsInactiveDeleted++
+					ll.Info("session is inactive with no activities. Deleted session")
+				}
+				continue
+			}
+
 			if len(activityHistories) == 0 {
 				sessionsSkipped++
 				ll.Warn("[SKIP]: no history found for user",
@@ -260,33 +306,6 @@ func main() {
 
 			if session.LastSeenActivityID != nil && *session.LastSeenActivityID == latest.InstanceID {
 				ll.Info("[SKIP]: No new activities since last check-in")
-				if !isCompleted && IsStaleSession(session) {
-					if config.DryRun {
-						if len(session.AggregateIDs) == 0 {
-							sessionsStaleDeleted++
-							ll.Info("[DRY-RUN] would delete stale session (no activities)")
-						} else {
-							sessionsStaleEnded++
-							ll.Info("[DRY-RUN] would end stale session")
-						}
-					} else {
-						err := EndOrDeleteSession(ctx, db, session)
-						if err != nil {
-							sessionsErrored++
-							errorsTotal++
-							ll.Error("failed to process stale session", "error", err)
-							continue
-						}
-						if len(session.AggregateIDs) == 0 {
-							sessionsStaleDeleted++
-							ll.Info("session is stale with no activities. Deleted session")
-						} else {
-							sessionsStaleEnded++
-							ll.Info("session is stale. Ending session")
-						}
-					}
-					continue
-				}
 				sessionsSkipped++
 				continue
 			}
@@ -302,34 +321,7 @@ func main() {
 			}
 
 			if len(IDs) == 0 {
-				ll.Info("[SKIP]: No new activity to save. Checking if Inactive")
-				if !isCompleted && IsInactiveSession(session) {
-					if config.DryRun {
-						if len(session.AggregateIDs) == 0 {
-							sessionsInactiveDeleted++
-							ll.Info("[DRY-RUN] would delete inactive session (no activities)")
-						} else {
-							sessionsInactiveEnded++
-							ll.Info("[DRY-RUN] would end inactive session")
-						}
-					} else {
-						err := EndOrDeleteSession(ctx, db, session)
-						if err != nil {
-							sessionsErrored++
-							errorsTotal++
-							ll.Error("failed to process inactive session", "error", err)
-							continue
-						}
-						if len(session.AggregateIDs) == 0 {
-							sessionsInactiveDeleted++
-							ll.Info("session is inactive with no activities. Deleted session")
-						} else {
-							sessionsInactiveEnded++
-							ll.Info("session is inactive. Ending session")
-						}
-					}
-					continue
-				}
+				ll.Info("[SKIP]: No new activity to save")
 				sessionsSkipped++
 				continue
 			}
