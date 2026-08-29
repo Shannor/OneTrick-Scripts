@@ -276,6 +276,14 @@ func TransformPeriodGroup(period *bungie.StatsPeriodGroup, activities map[string
 		return nil
 	}
 
+	if !isPvPActivity(period, definition, directorDefinition) {
+		slog.Debug("skipping non-PvP activity",
+			"instanceId", *period.ActivityDetails.InstanceId,
+			"directorActivity", directorDefinition.DisplayProperties.Name,
+		)
+		return nil
+	}
+
 	// Exclude generic Private Matches unless the activity is Iron Banner or Tribute
 	if period.ActivityDetails != nil && period.ActivityDetails.IsPrivate != nil && *period.ActivityDetails.IsPrivate {
 		dirNameLower := strings.ToLower(directorDefinition.DisplayProperties.Name)
@@ -318,6 +326,29 @@ func TransformPeriodGroup(period *bungie.StatsPeriodGroup, activities map[string
 		ActivityIcon: activityIcon,
 		Period:       *period.Period,
 	}
+}
+
+func isPvPActivity(period *bungie.StatsPeriodGroup, actDef, dirDef ActivityDefinition) bool {
+	if period == nil || period.ActivityDetails == nil {
+		return false
+	}
+	if period.ActivityDetails.Modes != nil {
+		for _, m := range *period.ActivityDetails.Modes {
+			switch m {
+			case 5, 19, 32, 37, 38, 43, 44, 45, 48, 71, 73, 84, 89, 91:
+				return true
+			}
+		}
+	}
+	switch actDef.DirectActivityModeType {
+	case 5, 19, 32, 37, 38, 43, 44, 45, 48, 71, 73, 84, 89, 91:
+		return true
+	}
+	switch dirDef.DirectActivityModeType {
+	case 5, 19, 32, 37, 38, 43, 44, 45, 48, 71, 73, 84, 89, 91:
+		return true
+	}
+	return false
 }
 
 func ToPlayerStats(values *map[string]bungie.HistoricalStatsValue) *PlayerStats {
