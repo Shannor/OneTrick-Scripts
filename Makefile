@@ -1,4 +1,4 @@
-.PHONY: help deploy-server-tick deploy-migration execute-server-tick execute-migration run-server-tick-local run-server-tick-local-dry
+.PHONY: help deploy-server-tick deploy-server-tick-metrics deploy-migration execute-server-tick execute-migration run-server-tick-local run-server-tick-local-dry
 
 # ====================================================================================
 # Variables
@@ -43,6 +43,14 @@ deploy-server-tick:
 		--set-secrets $(SERVER_TICK_SECRETS) \
 		--region $(REGION) \
 		--project=$(PROJECT_ID)
+
+## Deploys/updates server-tick Cloud Logging custom metrics.
+deploy-server-tick-metrics:
+	@for f in server-tick/metrics/*.yaml; do \
+		metric_name=$$(basename "$$f" .yaml); \
+		echo "Applying metric: $$metric_name"; \
+		gcloud logging metrics create "$$metric_name" --config-from-file="$$f" --project=$(PROJECT_ID) 2>/dev/null || gcloud logging metrics update "$$metric_name" --config-from-file="$$f" --project=$(PROJECT_ID); \
+	done
 
 ## Deploys the migration Cloud Run job.
 deploy-migration:

@@ -1,0 +1,13 @@
+name: server_tick_execution_duration
+description: "Execution duration of server-tick job in milliseconds"
+filter: 'resource.type="cloud_run_job" AND resource.labels.job_name="server-tick" AND jsonPayload.message="server_tick_completed"'
+metricDescriptor:
+  metricKind: DELTA
+  valueType: DISTRIBUTION
+  unit: "ms"
+valueExtractor: "EXTRACT(jsonPayload.tickDurationMs)"
+bucketOptions:
+  exponentialBuckets:
+    numFiniteBuckets: 30
+    growthFactor: 1.5
+    scale: 100

@@ -1,0 +1,13 @@
+name: server_tick_loadouts_failed
+description: "Total loadouts that failed to build/save per tick"
+filter: 'resource.type="cloud_run_job" AND resource.labels.job_name="server-tick" AND jsonPayload.message="server_tick_completed"'
+metricDescriptor:
+  metricKind: DELTA
+  valueType: DISTRIBUTION
+  unit: "1"
+valueExtractor: "EXTRACT(jsonPayload.loadoutsFailed)"
+bucketOptions:
+  exponentialBuckets:
+    numFiniteBuckets: 15
+    growthFactor: 2
+    scale: 1
