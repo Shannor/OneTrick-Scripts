@@ -31,6 +31,7 @@ func GetAllPVP(ctx context.Context, client *bungie.ClientWithResponses, db *fire
 		cID,
 		&bungie.Destiny2GetActivityHistoryParams{
 			Count: Of(int32(count)),
+			Mode:  Of(int32(5)), // ALL PVP
 			Page:  Of(int32(page)),
 		},
 	)
