@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"serverTick/bungie"
 	"serverTick/utils"
 	"strconv"
@@ -40,16 +39,12 @@ func GetPerformances(ctx context.Context, client *bungie.ClientWithResponses, db
 		return nil, fmt.Errorf("invalid activity ID: %w", err)
 	}
 
-	l := slog.With("activityId", activityID)
-
 	resp, err := client.Destiny2GetPostGameCarnageReportWithResponse(ctx, id)
 	if err != nil {
-		l.Error("Failed to get post game carnage report", "error", err)
 		return nil, err
 	}
 	data := resp.JSON200.PostGameCarnageReportData
 	if data.Entries == nil || data.ActivityDetails == nil {
-		l.Error("No data found for activity")
 		return nil, fmt.Errorf("nil data response")
 	}
 
@@ -172,8 +167,8 @@ func AddAggregate(ctx context.Context, db *firestore.Client, characterID string,
 }
 
 // Helper function to convert any slice to []interface{}
-func toInterfaceSlice[T any](slice []T) []interface{} {
-	result := make([]interface{}, len(slice))
+func toInterfaceSlice[T any](slice []T) []any {
+	result := make([]any, len(slice))
 	for i, v := range slice {
 		result[i] = v
 	}

@@ -1,13 +1,16 @@
 package main
 
 import (
-	"log/slog"
+	"context"
 	"serverTick/bungie"
 	"strconv"
 	"strings"
+
+	clog "github.com/Shannor/canonical-logger"
 )
 
 func TransformItemToDetails(
+	ctx context.Context,
 	item *bungie.DestinyItem,
 	items map[string]ItemDefinition,
 	damages map[string]DamageType,
@@ -27,17 +30,17 @@ func TransformItemToDetails(
 
 	// Generate Perks
 	if item.Perks != nil && item.Perks.Data != nil {
-		result.Perks = generatePerks(item, perks)
+		result.Perks = generatePerks(ctx, item, perks)
 	}
 
 	// Generate Sockets
 	if item.Sockets != nil && item.Sockets.Data != nil {
-		result.Sockets = generateSockets(item, items)
+		result.Sockets = generateSockets(ctx, item, items)
 	}
 
 	// Generate Stats
 	if item.Stats != nil && item.Stats.Data != nil {
-		result.Stats = generateStats(item, stats)
+		result.Stats = generateStats(ctx, item, stats)
 	}
 
 	return &result
@@ -98,12 +101,12 @@ func generateBaseInfo(item *bungie.DestinyItem, items map[string]ItemDefinition,
 	return base
 }
 
-func generatePerks(item *bungie.DestinyItem, perks map[string]PerkDefinition) []Perk {
+func generatePerks(ctx context.Context, item *bungie.DestinyItem, perks map[string]PerkDefinition) []Perk {
 	var results []Perk
 	for _, p := range *item.Perks.Data.Perks {
 		perk, ok := perks[strconv.Itoa(int(*p.PerkHash))]
 		if !ok {
-			slog.Warn("Perk not found in manifest", "perkHash", *p.PerkHash)
+			recordManifestWarning(ctx, "missing_perk", clog.Fields{"perkHash": *p.PerkHash})
 			continue
 		}
 		if !perk.IsDisplayable {
@@ -111,7 +114,7 @@ func generatePerks(item *bungie.DestinyItem, perks map[string]PerkDefinition) []
 		}
 		results = append(results, Perk{
 			Hash:        int64(*p.PerkHash),
-			IconPath:    Of(setBaseBungieURL(p.IconPath)),
+			IconPath:    new(setBaseBungieURL(p.IconPath)),
 			Name:        perk.DisplayProperties.Name,
 			Description: &perk.DisplayProperties.Description,
 		})
@@ -119,16 +122,16 @@ func generatePerks(item *bungie.DestinyItem, perks map[string]PerkDefinition) []
 	return results
 }
 
-func generateSockets(item *bungie.DestinyItem, items map[string]ItemDefinition) *[]Socket {
+func generateSockets(ctx context.Context, item *bungie.DestinyItem, items map[string]ItemDefinition) *[]Socket {
 	var sockets []Socket
 	for _, s := range *item.Sockets.Data.Sockets {
 		if s.PlugHash == nil {
-			slog.Warn("Socket has no plug hash")
+			recordJobIssue(ctx, "socket_data", "socket has no plug hash", nil)
 			continue
 		}
 		socket, ok := items[strconv.Itoa(int(*s.PlugHash))]
 		if !ok {
-			slog.Warn("Socket not found in manifest", "socketHash", *s.PlugHash)
+			recordManifestWarning(ctx, "missing_socket", clog.Fields{"socketHash": *s.PlugHash})
 			continue
 		}
 
@@ -139,24 +142,24 @@ func generateSockets(item *bungie.DestinyItem, items map[string]ItemDefinition) 
 			PlugHash:                  hash,
 			Name:                      socket.DisplayProperties.Name,
 			Description:               socket.DisplayProperties.Description,
-			ItemTypeDisplayName:       Of(socket.ItemTypeDisplayName),
-			ItemTypeTieredDisplayName: Of(socket.ItemTypeAndTierDisplayName),
-			Icon:                      Of(setBaseBungieURL(&socket.DisplayProperties.Icon)),
+			ItemTypeDisplayName:       new(socket.ItemTypeDisplayName),
+			ItemTypeTieredDisplayName: new(socket.ItemTypeAndTierDisplayName),
+			Icon:                      new(setBaseBungieURL(&socket.DisplayProperties.Icon)),
 		})
 	}
 	return &sockets
 }
 
-func generateStats(item *bungie.DestinyItem, statDefinitions map[string]StatDefinition) Stats {
+func generateStats(ctx context.Context, item *bungie.DestinyItem, statDefinitions map[string]StatDefinition) Stats {
 	stats := make(Stats)
 	for key, s := range *item.Stats.Data.Stats {
 		if s.StatHash == nil || s.Value == nil {
-			slog.Warn("Missing stat hash or value for stat", "statKey", key)
+			recordJobIssue(ctx, "stat_data", "missing stat hash or value for stat", clog.Fields{"statKey": key})
 			continue
 		}
 		stat, ok := statDefinitions[strconv.Itoa(int(*s.StatHash))]
 		if !ok {
-			slog.Warn("Stat not found in manifest", "statHash", *s.StatHash)
+			recordManifestWarning(ctx, "missing_stat_definition", clog.Fields{"statHash": *s.StatHash})
 			continue
 		}
 		value := int64(*s.Value)
@@ -170,14 +173,14 @@ func generateStats(item *bungie.DestinyItem, statDefinitions map[string]StatDefi
 	return stats
 }
 
-func TransformD2HistoricalStatValues(stats *map[string]bungie.HistoricalStatsValue) *map[string]UniqueStatValue {
+func TransformD2HistoricalStatValues(ctx context.Context, stats *map[string]bungie.HistoricalStatsValue) *map[string]UniqueStatValue {
 	if stats == nil {
 		return nil
 	}
 
 	result := make(map[string]UniqueStatValue)
 	for key, value := range *stats {
-		values := transformD2StatValue(&value)
+		values := transformD2StatValue(ctx, &value)
 		if values == nil {
 			continue
 		}
@@ -187,12 +190,12 @@ func TransformD2HistoricalStatValues(stats *map[string]bungie.HistoricalStatsVal
 	return &result
 }
 
-func transformD2StatValue(item *bungie.HistoricalStatsValue) *UniqueStatValue {
+func transformD2StatValue(ctx context.Context, item *bungie.HistoricalStatsValue) *UniqueStatValue {
 	if item == nil {
 		return nil
 	}
 	if item.Basic == nil {
-		slog.Warn("Missing basic value for stat")
+		recordJobIssue(ctx, "stat_value", "missing basic value for stat", nil)
 		return nil
 	}
 	result := &UniqueStatValue{
@@ -223,14 +226,14 @@ func uintToInt64[T ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64](item *T) *int64
 	if item == nil {
 		return nil
 	}
-	return Of(int64(*item))
+	return new(int64(*item))
 }
 
-func TransformHistoricActivity(history *bungie.HistoricalStatsActivity, activityDefinition, directorDef ActivityDefinition, modeDefinition ActivityModeDefinition) *ActivityHistory {
+func TransformHistoricActivity(ctx context.Context, history *bungie.HistoricalStatsActivity, activityDefinition, directorDef ActivityDefinition, modeDefinition ActivityModeDefinition) *ActivityHistory {
 	if history == nil {
 		return nil
 	}
-	mode := ActivityModeTypeToString((*bungie.CurrentActivityModeType)(history.Mode))
+	mode := ActivityModeTypeToString(ctx, (*bungie.CurrentActivityModeType)(history.Mode))
 	return &ActivityHistory{
 		ActivityHash: *uintToInt64(history.DirectorActivityHash),
 		InstanceID:   *history.InstanceId,
@@ -245,13 +248,13 @@ func TransformHistoricActivity(history *bungie.HistoricalStatsActivity, activity
 	}
 }
 
-func TransformPeriodGroups(period []bungie.StatsPeriodGroup, activities map[string]ActivityDefinition, directorDefinitions map[string]ActivityDefinition, modes map[string]ActivityModeDefinition) []ActivityHistory {
+func TransformPeriodGroups(ctx context.Context, period []bungie.StatsPeriodGroup, activities map[string]ActivityDefinition, directorDefinitions map[string]ActivityDefinition, modes map[string]ActivityModeDefinition) []ActivityHistory {
 	if period == nil {
 		return nil
 	}
 	var result []ActivityHistory
 	for _, group := range period {
-		r := TransformPeriodGroup(&group, activities, directorDefinitions, modes)
+		r := TransformPeriodGroup(ctx, &group, activities, directorDefinitions, modes)
 		if r == nil {
 			continue
 		}
@@ -260,19 +263,19 @@ func TransformPeriodGroups(period []bungie.StatsPeriodGroup, activities map[stri
 	return result
 }
 
-func TransformPeriodGroup(period *bungie.StatsPeriodGroup, activities map[string]ActivityDefinition, directorDefintions map[string]ActivityDefinition, modes map[string]ActivityModeDefinition) *ActivityHistory {
+func TransformPeriodGroup(ctx context.Context, period *bungie.StatsPeriodGroup, activities map[string]ActivityDefinition, directorDefintions map[string]ActivityDefinition, modes map[string]ActivityModeDefinition) *ActivityHistory {
 	if period == nil {
 		return nil
 	}
 
 	definition, ok := activities[strconv.Itoa(int(*period.ActivityDetails.ReferenceId))]
 	if !ok {
-		slog.Warn("Activity locale not found in manifest", "referenceId", *period.ActivityDetails.ReferenceId)
+		recordManifestWarning(ctx, "missing_activity_definition", clog.Fields{"referenceId": *period.ActivityDetails.ReferenceId})
 		return nil
 	}
 	directorDefinition, ok := directorDefintions[strconv.Itoa(int(*period.ActivityDetails.DirectorActivityHash))]
 	if !ok {
-		slog.Warn("Activity Directory not found in manifest", "directorActivityHash", *period.ActivityDetails.DirectorActivityHash)
+		recordManifestWarning(ctx, "missing_director_activity_definition", clog.Fields{"directorActivityHash": *period.ActivityDetails.DirectorActivityHash})
 		return nil
 	}
 
@@ -285,10 +288,6 @@ func TransformPeriodGroup(period *bungie.StatsPeriodGroup, activities map[string
 			strings.Contains(defNameLower, "tribute") ||
 			strings.Contains(defNameLower, "iron banner")
 		if !isTributeOrIB {
-			slog.Info("skipping private match that is not Iron Banner or Tribute",
-				"instanceId", *period.ActivityDetails.InstanceId,
-				"directorActivity", directorDefinition.DisplayProperties.Name,
-			)
 			return nil
 		}
 	}
@@ -297,7 +296,7 @@ func TransformPeriodGroup(period *bungie.StatsPeriodGroup, activities map[string
 	if !ok && period.ActivityDetails.Mode != nil {
 		activityMode = modes[strconv.Itoa(int(*period.ActivityDetails.Mode))]
 	}
-	mode := ActivityModeTypeToString((*bungie.CurrentActivityModeType)(period.ActivityDetails.Mode))
+	mode := ActivityModeTypeToString(ctx, (*bungie.CurrentActivityModeType)(period.ActivityDetails.Mode))
 	if directorDefinition.DisplayProperties.Name == "Iron Banner: Tribute" || strings.Contains(strings.ToLower(directorDefinition.DisplayProperties.Name), "tribute") {
 		mode = "Iron Banner Tribute"
 	}
@@ -400,7 +399,7 @@ func WeaponsToInstanceWeapons(values *[]bungie.HistoricalWeaponStats, items map[
 			r.Display = &Display{
 				Description: def.ItemTypeAndTierDisplayName,
 				HasIcon:     def.DisplayProperties.HasIcon,
-				Icon:        Of(setBaseBungieURL(&def.DisplayProperties.Icon)),
+				Icon:        new(setBaseBungieURL(&def.DisplayProperties.Icon)),
 				Name:        def.DisplayProperties.Name,
 			}
 		}
@@ -410,9 +409,9 @@ func WeaponsToInstanceWeapons(values *[]bungie.HistoricalWeaponStats, items map[
 	return result
 }
 
-func ActivityModeTypeToString(modeType *bungie.CurrentActivityModeType) string {
+func ActivityModeTypeToString(ctx context.Context, modeType *bungie.CurrentActivityModeType) string {
 	if modeType == nil {
-		slog.Warn("Activity Mode type is nil")
+		recordJobIssue(ctx, "activity_mode", "activity mode type is nil", nil)
 		return "Unknown"
 	}
 	switch *modeType {
@@ -473,7 +472,7 @@ func ActivityModeTypeToString(modeType *bungie.CurrentActivityModeType) string {
 	}
 }
 
-func generateClassStats(statDefinitions map[string]StatDefinition, stats map[string]int32) map[string]ClassStat {
+func generateClassStats(ctx context.Context, statDefinitions map[string]StatDefinition, stats map[string]int32) map[string]ClassStat {
 	if statDefinitions == nil {
 		return nil
 	}
@@ -481,7 +480,7 @@ func generateClassStats(statDefinitions map[string]StatDefinition, stats map[str
 	for key, value := range stats {
 		info, ok := statDefinitions[key]
 		if !ok {
-			slog.Warn("Missing stat", "statKey", key)
+			recordManifestWarning(ctx, "missing_stat_definition", clog.Fields{"statKey": key})
 			continue
 		}
 		i := ClassStat{

@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"cloud.google.com/go/firestore"
+	clog "github.com/Shannor/canonical-logger"
 )
 
 const (
@@ -115,19 +115,16 @@ func CleanupEmptyCompletedSessions(ctx context.Context, db *firestore.Client, dr
 	for _, doc := range docs {
 		var s Session
 		if err := doc.DataTo(&s); err != nil {
-			slog.Error("failed to parse session for cleanup", "docId", doc.Ref.ID, "error", err)
+			recordJobIssue(ctx, "session_cleanup_parse", "failed to parse session for cleanup", clog.Fields{"docId": doc.Ref.ID, "error": err})
 			continue
 		}
 
 		if len(s.AggregateIDs) == 0 {
-			if dryRun {
-				slog.Info("[DRY-RUN] would delete older empty completed session", "sessionId", s.ID)
-			} else {
+			if !dryRun {
 				if _, err := doc.Ref.Delete(ctx); err != nil {
-					slog.Error("failed to delete empty completed session", "sessionId", s.ID, "error", err)
+					recordJobIssue(ctx, "session_cleanup_delete", "failed to delete empty completed session", clog.Fields{"sessionId": s.ID, "error": err})
 					continue
 				}
-				slog.Info("deleted older empty completed session", "sessionId", s.ID)
 			}
 			deletedCount++
 		}
@@ -151,7 +148,7 @@ func EndSession(ctx context.Context, db *firestore.Client, s Session) error {
 
 	summary, err := ComputeSessionSummary(ctx, db, s)
 	if err != nil {
-		slog.Error("failed to compute session summary on ending session", "sessionId", s.ID, "error", err)
+		recordJobIssue(ctx, "ended_session_summary", "failed to compute session summary on ending session", clog.Fields{"sessionId": s.ID, "error": err})
 	}
 
 	updates := []firestore.Update{

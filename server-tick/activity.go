@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"serverTick/bungie"
 	"strconv"
 	"time"
 
 	"cloud.google.com/go/firestore"
+	clog "github.com/Shannor/canonical-logger"
 )
 
 func GetAllPVP(ctx context.Context, client *bungie.ClientWithResponses, db *firestore.Client, membershipID string, membershipType int64, characterID string, count int64, page int64) (
@@ -30,9 +30,9 @@ func GetAllPVP(ctx context.Context, client *bungie.ClientWithResponses, db *fire
 		mID,
 		cID,
 		&bungie.Destiny2GetActivityHistoryParams{
-			Count: Of(int32(count)),
-			Mode:  Of(int32(5)), // ALL PVP
-			Page:  Of(int32(page)),
+			Count: new(int32(count)),
+			Mode:  new(int32(5)), // ALL PVP
+			Page:  new(int32(page)),
 		},
 	)
 	if err != nil {
@@ -86,7 +86,7 @@ func GetAllPVP(ctx context.Context, client *bungie.ClientWithResponses, db *fire
 		return nil, err
 	}
 
-	return TransformPeriodGroups(*resp.JSON200.Response.Activities, definitions, directorDefinitions, modes), nil
+	return TransformPeriodGroups(ctx, *resp.JSON200.Response.Activities, definitions, directorDefinitions, modes), nil
 }
 
 type ActivityHistory struct {
@@ -111,10 +111,6 @@ type ActivityHistory struct {
 	Mode        *string   `firestore:"mode" json:"mode,omitempty"`
 	Period      time.Time `firestore:"period" json:"period"`
 	ReferenceID int64     `firestore:"referenceId" json:"referenceId"`
-}
-
-func Of[T any](value T) *T {
-	return &value
 }
 
 func setBaseBungieURL(value *string) string {
@@ -179,21 +175,20 @@ func GetLoadout(ctx context.Context, db *firestore.Client, client *bungie.Client
 
 	statDefinitions, err := GetStats(ctx, db)
 	if err != nil {
-		slog.Warn("failed to get statDefinitions but still will generate stats", "error", err)
+		recordJobIssue(ctx, "stat_definitions", "failed to get stat definitions", clog.Fields{"error": err})
 	}
 	stats := make(map[string]ClassStat)
 	if test.JSON200.Response.Characters.Data != nil {
 		characters := *test.JSON200.Response.Characters.Data
 		for ID, character := range characters {
 			if characterID == ID && character.Stats != nil {
-				stats = generateClassStats(statDefinitions, *character.Stats)
+				stats = generateClassStats(ctx, statDefinitions, *character.Stats)
 			}
 		}
 
 	}
 	loadout, err := buildLoadout(ctx, db, client, membershipID, membershipType, results, statDefinitions)
 	if err != nil {
-		slog.Error("couldn't build the loadout", "error", err)
 		return nil, nil, nil, err
 	}
 	return loadout, stats, timeStamp, nil

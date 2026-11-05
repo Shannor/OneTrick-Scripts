@@ -1,7 +1,13 @@
 name: server_tick_manifest_warnings
 description: "Count of missing manifest definition document warnings"
-filter: 'resource.type="cloud_run_job" AND resource.labels.job_name="server-tick" AND jsonPayload.message:"manifest definition document not found"'
+filter: 'resource.type="cloud_run_job" AND resource.labels.job_name="server-tick" AND jsonPayload.job="server-tick" AND jsonPayload.jobMetadata.manifestWarningCount>0'
 metricDescriptor:
   metricKind: DELTA
-  valueType: INT64
+  valueType: DISTRIBUTION
   unit: "1"
+valueExtractor: "EXTRACT(jsonPayload.jobMetadata.manifestWarningCount)"
+bucketOptions:
+  exponentialBuckets:
+    numFiniteBuckets: 15
+    growthFactor: 2
+    scale: 1

@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"serverTick/bungie"
 	"serverTick/utils"
 	"strconv"
 	"time"
 
 	"cloud.google.com/go/firestore"
+	clog "github.com/Shannor/canonical-logger"
 )
 
 var ErrDestinyServerDown = errors.New("destiny server is down")
@@ -464,22 +464,22 @@ type RecordDefinition struct {
 		Description   string `json:"description" firestore:"description"`
 	} `json:"expirationInfo" firestore:"expirationInfo"`
 	IntervalInfo struct {
-		IntervalObjectives                   []interface{} `json:"intervalObjectives" firestore:"intervalObjectives"`
-		IntervalRewards                      []interface{} `json:"intervalRewards" firestore:"intervalRewards"`
-		OriginalObjectiveArrayInsertionIndex int           `json:"originalObjectiveArrayInsertionIndex" firestore:"originalObjectiveArrayInsertionIndex"`
-		IsIntervalVersionedFromNormalRecord  bool          `json:"isIntervalVersionedFromNormalRecord" firestore:"isIntervalVersionedFromNormalRecord"`
+		IntervalObjectives                   []any `json:"intervalObjectives" firestore:"intervalObjectives"`
+		IntervalRewards                      []any `json:"intervalRewards" firestore:"intervalRewards"`
+		OriginalObjectiveArrayInsertionIndex int   `json:"originalObjectiveArrayInsertionIndex" firestore:"originalObjectiveArrayInsertionIndex"`
+		IsIntervalVersionedFromNormalRecord  bool  `json:"isIntervalVersionedFromNormalRecord" firestore:"isIntervalVersionedFromNormalRecord"`
 	} `json:"intervalInfo" firestore:"intervalInfo"`
-	RewardItems                       []interface{} `json:"rewardItems" firestore:"rewardItems"`
-	AnyRewardHasConditionalVisibility bool          `json:"anyRewardHasConditionalVisibility" firestore:"anyRewardHasConditionalVisibility"`
-	RecordTypeName                    string        `json:"recordTypeName" firestore:"recordTypeName"`
-	PresentationNodeType              int           `json:"presentationNodeType" firestore:"presentationNodeType"`
-	TraitIds                          []interface{} `json:"traitIds" firestore:"traitIds"`
-	TraitHashes                       []interface{} `json:"traitHashes" firestore:"traitHashes"`
-	ParentNodeHashes                  []interface{} `json:"parentNodeHashes" firestore:"parentNodeHashes"`
-	Hash                              int           `json:"hash" firestore:"hash"`
-	Index                             int           `json:"index" firestore:"index"`
-	Redacted                          bool          `json:"redacted" firestore:"redacted"`
-	Blacklisted                       bool          `json:"blacklisted" firestore:"blacklisted"`
+	RewardItems                       []any  `json:"rewardItems" firestore:"rewardItems"`
+	AnyRewardHasConditionalVisibility bool   `json:"anyRewardHasConditionalVisibility" firestore:"anyRewardHasConditionalVisibility"`
+	RecordTypeName                    string `json:"recordTypeName" firestore:"recordTypeName"`
+	PresentationNodeType              int    `json:"presentationNodeType" firestore:"presentationNodeType"`
+	TraitIds                          []any  `json:"traitIds" firestore:"traitIds"`
+	TraitHashes                       []any  `json:"traitHashes" firestore:"traitHashes"`
+	ParentNodeHashes                  []any  `json:"parentNodeHashes" firestore:"parentNodeHashes"`
+	Hash                              int    `json:"hash" firestore:"hash"`
+	Index                             int    `json:"index" firestore:"index"`
+	Redacted                          bool   `json:"redacted" firestore:"redacted"`
+	Blacklisted                       bool   `json:"blacklisted" firestore:"blacklisted"`
 }
 
 type ModeDisplayProperties struct {
@@ -685,7 +685,7 @@ func GetActivity(ctx context.Context, db *firestore.Client, hash int64) (*Activi
 
 	doc, err := db.Collection(string(ActivityCollection)).Doc(hashStr).Get(ctx)
 	if err != nil {
-		slog.Warn("manifest definition document not found in Firestore", "collection", string(ActivityCollection), "docId", hashStr, "error", err)
+		recordManifestWarning(ctx, "missing_activity_definition", clog.Fields{"collection": string(ActivityCollection), "docId": hashStr, "error": err})
 		return nil, fmt.Errorf("failed to get activity definition: %w", err)
 	}
 
@@ -717,7 +717,7 @@ func GetActivityMode(ctx context.Context, db *firestore.Client, hash int64) (*Ac
 
 	doc, err := db.Collection(string(ActivityModeCollection)).Doc(hashStr).Get(ctx)
 	if err != nil {
-		slog.Warn("manifest definition document not found in Firestore", "collection", string(ActivityModeCollection), "docId", hashStr, "error", err)
+		recordManifestWarning(ctx, "missing_activity_mode_definition", clog.Fields{"collection": string(ActivityModeCollection), "docId": hashStr, "error": err})
 		return nil, fmt.Errorf("failed to get activity mode definition: %w", err)
 	}
 
@@ -763,7 +763,7 @@ func GetItem(ctx context.Context, db *firestore.Client, hash int64) (*ItemDefini
 
 	doc, err := db.Collection(string(ItemDefinitionCollection)).Doc(hashStr).Get(ctx)
 	if err != nil {
-		slog.Warn("manifest definition document not found in Firestore", "collection", string(ItemDefinitionCollection), "docId", hashStr, "error", err)
+		recordManifestWarning(ctx, "missing_item_definition", clog.Fields{"collection": string(ItemDefinitionCollection), "docId": hashStr, "error": err})
 		return nil, fmt.Errorf("failed to get item definition: %w", err)
 	}
 
@@ -794,7 +794,7 @@ func GetPerk(ctx context.Context, db *firestore.Client, hash int64) (*PerkDefini
 
 	doc, err := db.Collection(string(SandboxPerkCollection)).Doc(hashStr).Get(ctx)
 	if err != nil {
-		slog.Warn("manifest definition document not found in Firestore", "collection", string(SandboxPerkCollection), "docId", hashStr, "error", err)
+		recordManifestWarning(ctx, "missing_perk_definition", clog.Fields{"collection": string(SandboxPerkCollection), "docId": hashStr, "error": err})
 		return nil, fmt.Errorf("failed to get item definition: %w", err)
 	}
 
@@ -825,10 +825,7 @@ func batchedFetch[T any](ctx context.Context, db *firestore.Client, collection M
 	const maxBatch = 30
 	var out []T
 	for i := 0; i < len(idStrs); i += maxBatch {
-		end := i + maxBatch
-		if end > len(idStrs) {
-			end = len(idStrs)
-		}
+		end := min(i+maxBatch, len(idStrs))
 		batch := idStrs[i:end]
 		refs := make([]*firestore.DocumentRef, 0, len(batch))
 		for _, id := range batch {
@@ -840,10 +837,7 @@ func batchedFetch[T any](ctx context.Context, db *firestore.Client, collection M
 		}
 		for _, doc := range docs {
 			if !doc.Exists() {
-				slog.Warn("manifest definition document not found in Firestore",
-					"collection", string(collection),
-					"docId", doc.Ref.ID,
-				)
+				recordManifestWarning(ctx, "missing_manifest_definition", clog.Fields{"collection": string(collection), "docId": doc.Ref.ID})
 			}
 		}
 		items, err := utils.GetAllToStructs[T](docs)
@@ -943,19 +937,18 @@ func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.Clie
 		itemHashes []int64
 		perkHashes []int64
 	)
-	l := slog.With("membershipId", membershipID)
 	for _, item := range items {
 		if item.ItemInstanceId == nil {
-			l.Warn("no instance id found")
+			recordJobIssue(ctx, "item_instance", "no instance id found", nil)
 			continue
 		}
 		d, err := GetItemDetails(ctx, client, membershipID, membershipType, *item.ItemInstanceId)
 		if err != nil {
-			l.Error("failed to get item from API", "error", err)
+			recordJobIssue(ctx, "item_details", "failed to get item from API", clog.Fields{"error": err, "instanceId": *item.ItemInstanceId})
 			continue
 		}
 		if d == nil {
-			l.Warn("destiny item was nil")
+			recordJobIssue(ctx, "item_details", "destiny item was nil", clog.Fields{"instanceId": *item.ItemInstanceId})
 			continue
 		}
 		destinyItems[strconv.Itoa(int(*item.ItemHash))] = *d
@@ -965,12 +958,11 @@ func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.Clie
 		}
 	}
 
-	l.Debug("build the list of hashes")
 	for instanceID, item := range destinyItems {
 		// Base Item Hash
 		itemID, err := strconv.ParseInt(instanceID, 10, 64)
 		if err != nil {
-			l.Warn("failed to convert instance ID")
+			recordJobIssue(ctx, "item_hash", "failed to convert item hash", clog.Fields{"itemHash": instanceID, "error": err})
 			continue
 		}
 		itemHashes = append(itemHashes, itemID)
@@ -989,12 +981,6 @@ func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.Clie
 			}
 		}
 	}
-	l.Debug("got the data to grab the DB",
-		"itemCount", len(itemHashes),
-		"perkCount", len(perkHashes),
-	)
-
-	startTime := time.Now()
 	d2Items, err := GetItemsByIDs(ctx, db, itemHashes)
 	if err != nil {
 		return nil, err
@@ -1009,8 +995,6 @@ func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.Clie
 	if err != nil {
 		return nil, err
 	}
-	l.Debug("Grabbed all the data needed for the loadout", "duration", time.Since(startTime))
-
 	for instanceID, detail := range destinyItems {
 		snap := ItemSnapshot{
 			InstanceID: instanceID,
@@ -1023,14 +1007,13 @@ func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.Clie
 				styleItem = &s
 			}
 		}
-		result := TransformItemToDetails(&detail, d2Items, damageTypes, perks, stats, styleItem)
+		result := TransformItemToDetails(ctx, &detail, d2Items, damageTypes, perks, stats, styleItem)
 		snap.Name = result.BaseInfo.Name
 		snap.ItemHash = result.BaseInfo.ItemHash
 		snap.ItemProperties = *result
 		snap.BucketHash = &result.BaseInfo.BucketHash
 		loadout[strconv.FormatInt(snap.ItemProperties.BaseInfo.BucketHash, 10)] = snap
 	}
-	l.Debug("loadout built")
 	return loadout, nil
 }
 func GetItemDetails(ctx context.Context, client *bungie.ClientWithResponses, membershipID int64, membershipType int64, instanceID string) (*bungie.DestinyItem, error) {
@@ -1048,12 +1031,6 @@ func GetItemDetails(ctx context.Context, client *bungie.ClientWithResponses, mem
 		&params,
 	)
 	if err != nil {
-		slog.With(
-			"error",
-			err.Error(),
-			"weapon instance id",
-			instanceID,
-		).Error("Failed to get item details")
 		return nil, err
 	}
 	if response.JSON200.DestinyItem == nil {

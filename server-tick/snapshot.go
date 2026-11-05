@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"serverTick/bungie"
 	"serverTick/generator"
 	"serverTick/utils"
@@ -57,7 +56,7 @@ func generateSnapshot(ctx context.Context, db *firestore.Client, client *bungie.
 	return &CharacterSnapshot{
 		UserID:      userID,
 		CharacterID: characterID,
-		Stats:       Of(stats),
+		Stats:       new(stats),
 		Loadout:     loadout,
 	}, nil
 }
@@ -113,7 +112,6 @@ func create(ctx context.Context, db *firestore.Client, userID string, snapshot C
 		return nil, err
 	}
 	if existingSnapshot != nil {
-		slog.Info("Creating a history entry")
 		return createHistoryEntry(ctx, db, *existingSnapshot)
 	}
 
@@ -127,11 +125,9 @@ func create(ctx context.Context, db *firestore.Client, userID string, snapshot C
 	ref := db.Collection(snapshotCollection).NewDoc()
 	snapshot.ID = ref.ID
 	_, err = ref.Set(ctx, snapshot)
-	slog.Info("Created original snapshot")
 	if err != nil {
 		return nil, err
 	}
-	slog.Info("Creating a history entry for original snapshot")
 	return createHistoryEntry(ctx, db, snapshot)
 }
 
@@ -171,7 +167,7 @@ func createHistoryEntry(ctx context.Context, db *firestore.Client, og CharacterS
 		return nil, err
 	}
 
-	_, err = db.Collection(snapshotCollection).Doc(og.ID).Set(ctx, map[string]interface{}{
+	_, err = db.Collection(snapshotCollection).Doc(og.ID).Set(ctx, map[string]any{
 		"updatedAt": now,
 	}, firestore.MergeAll)
 	if err != nil {
@@ -186,13 +182,6 @@ func FindBestFit(ctx context.Context, db *firestore.Client, userID string, chara
 	minTime := activityPeriod.Add(time.Duration(-1) * time.Hour)
 	// A game can last about 8 minutes over the starting time
 	maxTime := activityPeriod.Add(time.Duration(15) * time.Minute)
-	l := slog.With(
-		"activityPeriod", activityPeriod,
-		"minTime", minTime,
-		"maxTime", maxTime,
-		"userId", userID,
-		"characterId", characterID,
-	)
 	docs, err := db.CollectionGroup(historyCollection).
 		Where("userId", "==", userID).
 		Where("characterId", "==", characterID).
@@ -201,7 +190,6 @@ func FindBestFit(ctx context.Context, db *firestore.Client, userID string, chara
 		OrderBy("timestamp", firestore.Desc).
 		Documents(ctx).GetAll()
 	if err != nil {
-		l.Error("failed to get histories", "error", err.Error())
 		return nil, nil, err
 	}
 
@@ -221,7 +209,6 @@ func FindBestFit(ctx context.Context, db *firestore.Client, userID string, chara
 	)
 	histories, err := utils.GetAllToStructs[History](docs)
 	if err != nil {
-		l.Error("failed to get all histories", "error", err.Error())
 		return nil, nil, err
 	}
 
@@ -300,7 +287,6 @@ func FindBestFit(ctx context.Context, db *firestore.Client, userID string, chara
 
 	snap, err := Get(ctx, db, bestFit.ParentID)
 	if err != nil {
-		l.Error("failed to get snapshot", "error", err.Error())
 		return nil, nil, err
 	}
 	return snap, &link, nil
@@ -325,16 +311,13 @@ func EnrichInstancePerformance(snapshot *CharacterSnapshot, performance Instance
 		Weapons:     performance.Weapons,
 	}
 	if snapshot == nil {
-		slog.Debug("No provided snapshot to perform enrichment on")
 		return result, nil
 	}
 
 	if len(performance.Weapons) == 0 {
-		slog.Debug("No metrics provided to enrich")
 		return result, nil
 	}
 	if snapshot.Loadout == nil {
-		slog.Debug("No loadout provided to enrich")
 		return result, nil
 	}
 

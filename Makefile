@@ -6,7 +6,7 @@
 
 PROJECT_ID   := gruntt-destiny
 REGION       := us-central1
-EMULATOR_HOST ?= 0.0.0.0:8081
+EMULATOR_HOST ?= $(if $(FIRESTORE_EMULATOR_HOST),$(FIRESTORE_EMULATOR_HOST),127.0.0.1:8081)
 
 # Server Tick specific variables
 SERVER_TICK_NAME         := server-tick
