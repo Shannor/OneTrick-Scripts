@@ -1,4 +1,4 @@
-.PHONY: help deploy-server-tick deploy-server-tick-metrics deploy-migration execute-server-tick execute-migration run-server-tick-local run-server-tick-local-dry
+.PHONY: help deploy-server-tick deploy-server-tick-metrics deploy-migration execute-server-tick execute-migration run-server-tick-local run-server-tick-local-dry run-server-tick-local-env
 
 # ====================================================================================
 # Variables
@@ -11,6 +11,7 @@ EMULATOR_HOST ?= $(if $(FIRESTORE_EMULATOR_HOST),$(FIRESTORE_EMULATOR_HOST),127.
 # Server Tick specific variables
 SERVER_TICK_NAME         := server-tick
 SERVER_TICK_SOURCE       := ./server-tick
+SERVER_TICK_ENV_FILE ?= $(SERVER_TICK_SOURCE)/.env
 SERVER_TICK_TASKS        := 1
 SERVER_TICK_TIMEOUT      := 5m
 SERVER_TICK_MEMORY       := 1Gi
@@ -71,3 +72,8 @@ run-server-tick-local:
 ## Runs server-tick in dry-run mode against local Firestore docker DB.
 run-server-tick-local-dry:
 	cd $(SERVER_TICK_SOURCE) && go run . -use-emulator -emulator-host $(EMULATOR_HOST) -dry-run
+
+## Runs server-tick using its local environment file against production Firestore.
+run-server-tick-local-env:
+	@test -f "$(SERVER_TICK_ENV_FILE)" || { echo "Missing $(SERVER_TICK_ENV_FILE); create it from server-tick/.env.example"; exit 1; }
+	cd $(SERVER_TICK_SOURCE) && set -a && . "$(abspath $(SERVER_TICK_ENV_FILE))" && set +a && unset FIRESTORE_EMULATOR_HOST && go run .

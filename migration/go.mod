@@ -1,10 +1,10 @@
 module migrationJob
 
-go 1.24
+go 1.26.4
 
 require (
 	cloud.google.com/go/firestore v1.18.0
-	github.com/rs/zerolog v1.34.0
+	github.com/Shannor/canonical-logger v0.5.0
 )
 
 require (
@@ -19,8 +19,6 @@ require (
 	github.com/google/s2a-go v0.1.8 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.4 // indirect
 	github.com/googleapis/gax-go/v2 v2.14.0 // indirect
-	github.com/mattn/go-colorable v0.1.13 // indirect
-	github.com/mattn/go-isatty v0.0.19 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.54.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.54.0 // indirect
 	go.opentelemetry.io/otel v1.29.0 // indirect

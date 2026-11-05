@@ -20,10 +20,7 @@ func GetAggregatesByIDs(ctx context.Context, db *firestore.Client, aggregateIDs 
 	const maxBatch = 30
 	var out []Aggregate
 	for i := 0; i < len(aggregateIDs); i += maxBatch {
-		end := i + maxBatch
-		if end > len(aggregateIDs) {
-			end = len(aggregateIDs)
-		}
+		end := min(i+maxBatch, len(aggregateIDs))
 		batch := aggregateIDs[i:end]
 		refs := make([]*firestore.DocumentRef, 0, len(batch))
 		for _, id := range batch {

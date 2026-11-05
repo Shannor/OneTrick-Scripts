@@ -1,5 +1,6 @@
 .gcloudignore
 .git
 .gitignore
+.env
 Server_Tick
 *.exe

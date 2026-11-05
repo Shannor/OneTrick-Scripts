@@ -7,7 +7,7 @@ import (
 )
 
 // PrettyPrint pretty-prints a struct or map in JSON format.
-func PrettyPrint(input interface{}) {
+func PrettyPrint(input any) {
 	bytes, err := json.MarshalIndent(input, "", "    ")
 	if err != nil {
 	}
@@ -15,9 +15,9 @@ func PrettyPrint(input interface{}) {
 }
 
 // PrintStructKV prints the keys and values of a struct.
-func PrintStructKV(input interface{}) {
+func PrintStructKV(input any) {
 	val := reflect.ValueOf(input)
-	if val.Kind() == reflect.Ptr {
+	if val.Kind() == reflect.Pointer {
 		val = val.Elem()
 	}
 	if val.Kind() != reflect.Struct {
