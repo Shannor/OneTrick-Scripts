@@ -129,9 +129,6 @@ func generateSockets(ctx context.Context, item *bungie.DestinyItem, items map[st
 	var sockets []Socket
 	for _, s := range *item.Sockets.Data.Sockets {
 		if s.PlugHash == nil {
-			clog.WithGroupField(ctx, "converterService.generateSockets", "warning", clog.Fields{
-				"type": "missing_plug_hash",
-			})
 			continue
 		}
 		socket, ok := items[strconv.Itoa(int(*s.PlugHash))]
