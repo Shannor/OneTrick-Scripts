@@ -1,4 +1,4 @@
-.PHONY: help deploy-server-tick deploy-server-tick-metrics deploy-migration execute-server-tick execute-migration run-server-tick-local run-server-tick-local-dry run-server-tick-local-env
+.PHONY: help deploy-server-tick deploy-server-tick-metrics deploy-migration execute-server-tick execute-migration run-server-tick-local run-server-tick-local-dry run-server-tick-local-env run-server-tick-examples backfill-game-modes-prod-dry backfill-game-modes-prod
 
 # ====================================================================================
 # Variables
@@ -77,3 +77,15 @@ run-server-tick-local-dry:
 run-server-tick-local-env:
 	@test -f "$(SERVER_TICK_ENV_FILE)" || { echo "Missing $(SERVER_TICK_ENV_FILE); create it from server-tick/.env.example"; exit 1; }
 	cd $(SERVER_TICK_SOURCE) && set -a && . "$(abspath $(SERVER_TICK_ENV_FILE))" && set +a && unset FIRESTORE_EMULATOR_HOST && go run .
+
+## Runs the server-tick canonical logging examples locally.
+run-server-tick-examples:
+	cd $(SERVER_TICK_SOURCE) && go run ./examples
+
+## Runs estimatedGameMode backfill in dry-run mode against production Firestore DB.
+backfill-game-modes-prod-dry:
+	cd $(SERVER_TICK_SOURCE) && unset FIRESTORE_EMULATOR_HOST && go run . -backfill-game-modes -dry-run
+
+## Runs estimatedGameMode backfill against production Firestore DB.
+backfill-game-modes-prod:
+	cd $(SERVER_TICK_SOURCE) && unset FIRESTORE_EMULATOR_HOST && go run . -backfill-game-modes

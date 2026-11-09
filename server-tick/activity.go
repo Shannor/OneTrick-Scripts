@@ -16,6 +16,7 @@ func GetAllPVP(ctx context.Context, client *bungie.ClientWithResponses, db *fire
 	[]ActivityHistory,
 	error,
 ) {
+	start := time.Now()
 	cID, err := strconv.ParseInt(characterID, 10, 64)
 	if err != nil {
 		return nil, err
@@ -24,6 +25,7 @@ func GetAllPVP(ctx context.Context, client *bungie.ClientWithResponses, db *fire
 	if err != nil {
 		return nil, err
 	}
+	apiStart := time.Now()
 	resp, err := client.Destiny2GetActivityHistoryWithResponse(
 		ctx,
 		int32(membershipType),
@@ -36,10 +38,19 @@ func GetAllPVP(ctx context.Context, client *bungie.ClientWithResponses, db *fire
 		},
 	)
 	if err != nil {
+		clog.WithGroupFields(ctx, "bungieClient.getActivityHistory", clog.Fields{
+			"characterId": characterID,
+			"durationMs":  time.Since(apiStart).Milliseconds(),
+		})
 		return nil, err
 	}
+	clog.WithGroupFields(ctx, "bungieClient.getActivityHistory", clog.Fields{
+		"characterId": characterID,
+		"statusCode":  resp.StatusCode(),
+		"durationMs":  time.Since(apiStart).Milliseconds(),
+	})
 	if resp.StatusCode() != http.StatusOK {
-		return nil, fmt.Errorf("failed to get activity history")
+		return nil, fmt.Errorf("failed to get activity history (status %d)", resp.StatusCode())
 	}
 	if resp.JSON200 == nil {
 		return nil, fmt.Errorf("no response found")
@@ -86,8 +97,24 @@ func GetAllPVP(ctx context.Context, client *bungie.ClientWithResponses, db *fire
 		return nil, err
 	}
 
-	return TransformPeriodGroups(ctx, *resp.JSON200.Response.Activities, definitions, directorDefinitions, modes), nil
+	activities := TransformPeriodGroups(ctx, *resp.JSON200.Response.Activities, definitions, directorDefinitions, modes)
+	clog.WithGroupFields(ctx, "activityService.getAllPvP", clog.Fields{
+		"characterId":           characterID,
+		"rawActivitiesReturned": len(source),
+		"activitiesReturned":    len(activities),
+		"durationMs":            time.Since(start).Milliseconds(),
+	})
+	return activities, nil
 }
+
+type GameMode string
+
+const (
+	GameModeCompetitive GameMode = "competitive"
+	GameModeQuickplay   GameMode = "quickplay"
+	GameModeIronBanner  GameMode = "ironBanner"
+	GameModeTrials      GameMode = "trials"
+)
 
 type ActivityHistory struct {
 	Activity string `firestore:"activity" json:"activity"`
@@ -98,6 +125,9 @@ type ActivityHistory struct {
 	// ActivityIcon URL to the icon for the type of activity, IB, Crucible, etc.
 	ActivityIcon string `firestore:"activityIcon" json:"activityIcon"`
 	Description  string `firestore:"description" json:"description"`
+
+	// EstimatedGameMode System-classified high-level PvP bucket (competitive, quickplay, ironBanner, trials)
+	EstimatedGameMode *GameMode `firestore:"estimatedGameMode,omitempty" json:"estimatedGameMode,omitempty"`
 
 	// ImageURL URL for the image of the destination activity
 	ImageURL string `firestore:"imageUrl" json:"imageUrl"`
@@ -121,20 +151,31 @@ func setBaseBungieURL(value *string) string {
 }
 
 func GetLoadout(ctx context.Context, db *firestore.Client, client *bungie.ClientWithResponses, membershipID int64, membershipType int64, characterID string) (Loadout, map[string]ClassStat, *time.Time, error) {
+	start := time.Now()
 	var components []int32
 	components = append(components, CharactersEquipment, CharactersCode)
 	params := &bungie.Destiny2GetProfileParams{
 		Components: &components,
 	}
+	apiStart := time.Now()
 	test, err := client.Destiny2GetProfileWithResponse(ctx, int32(membershipType), membershipID, params)
 	if err != nil {
+		clog.WithGroupFields(ctx, "bungieClient.getProfile", clog.Fields{
+			"characterId": characterID,
+			"durationMs":  time.Since(apiStart).Milliseconds(),
+		})
 		return nil, nil, nil, err
 	}
+	clog.WithGroupFields(ctx, "bungieClient.getProfile", clog.Fields{
+		"characterId": characterID,
+		"statusCode":  test.StatusCode(),
+		"durationMs":  time.Since(apiStart).Milliseconds(),
+	})
 
 	// TODO: Migrate snapshot to include the guns information as it is now, since mods and perks could change on the same gun.
 
-	if test.JSON200 == nil {
-		return nil, nil, nil, fmt.Errorf("no response found")
+	if test.StatusCode() != http.StatusOK || test.JSON200 == nil {
+		return nil, nil, nil, fmt.Errorf("no response found (status %d)", test.StatusCode())
 	}
 
 	timeStamp := test.JSON200.Response.ResponseMintedTimestamp
@@ -175,7 +216,9 @@ func GetLoadout(ctx context.Context, db *firestore.Client, client *bungie.Client
 
 	statDefinitions, err := GetStats(ctx, db)
 	if err != nil {
-		recordJobIssue(ctx, "stat_definitions", "failed to get stat definitions", clog.Fields{"error": err})
+		clog.WithGroupField(ctx, "activityService.getLoadout", "warning", clog.Fields{
+			"type": "stat_definitions",
+		})
 	}
 	stats := make(map[string]ClassStat)
 	if test.JSON200.Response.Characters.Data != nil {
@@ -191,5 +234,11 @@ func GetLoadout(ctx context.Context, db *firestore.Client, client *bungie.Client
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	clog.WithGroupFields(ctx, "activityService.getLoadout", clog.Fields{
+		"characterId":    characterID,
+		"equipmentCount": len(results),
+		"loadoutCount":   len(loadout),
+		"durationMs":     time.Since(start).Milliseconds(),
+	})
 	return loadout, stats, timeStamp, nil
 }

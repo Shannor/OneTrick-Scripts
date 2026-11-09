@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/firestore"
+	clog "github.com/Shannor/canonical-logger"
 )
 
 const (
@@ -19,9 +20,10 @@ const (
 )
 
 func Save(ctx context.Context, db *firestore.Client, client *bungie.ClientWithResponses, userID, membershipID, characterID string) (*CharacterSnapshot, error) {
+	start := time.Now()
 	data, err := generateSnapshot(ctx, db, client, userID, membershipID, characterID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build data: %v", err)
+		return nil, fmt.Errorf("failed to build data: %w", err)
 	}
 	if data == nil {
 		return nil, fmt.Errorf("failed to generate snapshot")
@@ -31,6 +33,11 @@ func Save(ctx context.Context, db *firestore.Client, client *bungie.ClientWithRe
 		return nil, fmt.Errorf("failed to create snapshot: %w", err)
 	}
 	data.ID = *id
+	clog.WithGroupFields(ctx, "snapshotService.save", clog.Fields{
+		"snapshotId":  data.ID,
+		"characterId": characterID,
+		"durationMs":  time.Since(start).Milliseconds(),
+	})
 	return data, nil
 }
 func generateSnapshot(ctx context.Context, db *firestore.Client, client *bungie.ClientWithResponses, userID, membershipID, characterID string) (*CharacterSnapshot, error) {
@@ -115,6 +122,7 @@ func create(ctx context.Context, db *firestore.Client, userID string, snapshot C
 		return createHistoryEntry(ctx, db, *existingSnapshot)
 	}
 
+	createStart := time.Now()
 	snapshot.UserID = userID
 	now := time.Now()
 	snapshot.CreatedAt = now
@@ -125,6 +133,11 @@ func create(ctx context.Context, db *firestore.Client, userID string, snapshot C
 	ref := db.Collection(snapshotCollection).NewDoc()
 	snapshot.ID = ref.ID
 	_, err = ref.Set(ctx, snapshot)
+	clog.WithGroupFields(ctx, "db.createSnapshot", clog.Fields{
+		"collection": snapshotCollection,
+		"snapshotId": snapshot.ID,
+		"durationMs": time.Since(createStart).Milliseconds(),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -132,22 +145,39 @@ func create(ctx context.Context, db *firestore.Client, userID string, snapshot C
 }
 
 func optionalGetByHash(db *firestore.Client, ctx context.Context, hash string) (*CharacterSnapshot, error) {
+	start := time.Now()
 	og := CharacterSnapshot{}
 	docs, err := db.Collection(snapshotCollection).
 		Where("hash", "==", hash).
 		Limit(1).
 		Documents(ctx).GetAll()
 	if err != nil {
+		clog.WithGroupFields(ctx, "db.getSnapshotByHash", clog.Fields{
+			"collection": snapshotCollection,
+			"durationMs": time.Since(start).Milliseconds(),
+		})
 		return nil, err
 	}
 	if len(docs) == 0 {
+		clog.WithGroupFields(ctx, "db.getSnapshotByHash", clog.Fields{
+			"collection":     snapshotCollection,
+			"reusedExisting": false,
+			"durationMs":     time.Since(start).Milliseconds(),
+		})
 		return nil, nil
 	}
 	err = docs[0].DataTo(&og)
-	return &og, nil
+	clog.WithGroupFields(ctx, "db.getSnapshotByHash", clog.Fields{
+		"collection":     snapshotCollection,
+		"snapshotId":     og.ID,
+		"reusedExisting": true,
+		"durationMs":     time.Since(start).Milliseconds(),
+	})
+	return &og, err
 }
 
 func createHistoryEntry(ctx context.Context, db *firestore.Client, og CharacterSnapshot) (*string, error) {
+	start := time.Now()
 	now := time.Now()
 	history := History{
 		ParentID:    og.ID,
@@ -170,6 +200,12 @@ func createHistoryEntry(ctx context.Context, db *firestore.Client, og CharacterS
 	_, err = db.Collection(snapshotCollection).Doc(og.ID).Set(ctx, map[string]any{
 		"updatedAt": now,
 	}, firestore.MergeAll)
+	clog.WithGroupFields(ctx, "db.createSnapshotHistory", clog.Fields{
+		"collection": historyCollection,
+		"snapshotId": og.ID,
+		"historyId":  history.ID,
+		"durationMs": time.Since(start).Milliseconds(),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -177,6 +213,7 @@ func createHistoryEntry(ctx context.Context, db *firestore.Client, og CharacterS
 }
 
 func FindBestFit(ctx context.Context, db *firestore.Client, userID string, characterID string, activityPeriod time.Time, weapons map[string]WeaponInstanceMetrics) (*CharacterSnapshot, *SnapshotLink, error) {
+	start := time.Now()
 
 	// Get the last hour of snapshots
 	minTime := activityPeriod.Add(time.Duration(-1) * time.Hour)
@@ -200,6 +237,12 @@ func FindBestFit(ctx context.Context, db *firestore.Client, userID string, chara
 			ConfidenceSource: SystemConfidenceSource,
 			CreatedAt:        time.Now(),
 		}
+		clog.WithGroupFields(ctx, "snapshotService.findBestFit", clog.Fields{
+			"characterId":        characterID,
+			"historiesEvaluated": 0,
+			"confidenceLevel":    string(NotFoundConfidenceLevel),
+			"durationMs":         time.Since(start).Milliseconds(),
+		})
 		return nil, &link, nil
 	}
 
@@ -268,6 +311,12 @@ func FindBestFit(ctx context.Context, db *firestore.Client, userID string, chara
 			ConfidenceSource: SystemConfidenceSource,
 			CreatedAt:        time.Now(),
 		}
+		clog.WithGroupFields(ctx, "snapshotService.findBestFit", clog.Fields{
+			"characterId":        characterID,
+			"historiesEvaluated": len(histories),
+			"confidenceLevel":    string(NoMatchConfidenceLevel),
+			"durationMs":         time.Since(start).Milliseconds(),
+		})
 		return nil, &link, nil
 	}
 	level := LowConfidenceLevel
@@ -289,15 +338,33 @@ func FindBestFit(ctx context.Context, db *firestore.Client, userID string, chara
 	if err != nil {
 		return nil, nil, err
 	}
+	clog.WithGroupFields(ctx, "snapshotService.findBestFit", clog.Fields{
+		"characterId":        characterID,
+		"historiesEvaluated": len(histories),
+		"confidenceLevel":    string(level),
+		"snapshotId":         bestFit.ParentID,
+		"durationMs":         time.Since(start).Milliseconds(),
+	})
 	return snap, &link, nil
 }
 func Get(ctx context.Context, db *firestore.Client, snapshotID string) (*CharacterSnapshot, error) {
+	start := time.Now()
 	var result *CharacterSnapshot
 	data, err := db.Collection(snapshotCollection).Doc(snapshotID).Get(ctx)
 	if err != nil {
+		clog.WithGroupFields(ctx, "db.getSnapshot", clog.Fields{
+			"collection": snapshotCollection,
+			"snapshotId": snapshotID,
+			"durationMs": time.Since(start).Milliseconds(),
+		})
 		return nil, err
 	}
 	err = data.DataTo(&result)
+	clog.WithGroupFields(ctx, "db.getSnapshot", clog.Fields{
+		"collection": snapshotCollection,
+		"snapshotId": snapshotID,
+		"durationMs": time.Since(start).Milliseconds(),
+	})
 	if err != nil {
 		return nil, err
 	}

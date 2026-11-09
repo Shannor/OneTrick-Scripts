@@ -4,7 +4,7 @@ go 1.26.4
 
 require (
 	cloud.google.com/go/firestore v1.18.0
-	github.com/Shannor/canonical-logger v0.5.0
+	github.com/Shannor/canonical-logger v0.6.0
 	github.com/oapi-codegen/runtime v1.1.2
 	google.golang.org/api v0.214.0
 )

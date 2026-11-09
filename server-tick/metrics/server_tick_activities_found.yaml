@@ -5,7 +5,7 @@ metricDescriptor:
   metricKind: DELTA
   valueType: DISTRIBUTION
   unit: "1"
-valueExtractor: "EXTRACT(jsonPayload.jobMetadata.activitiesFoundTotal)"
+valueExtractor: "EXTRACT(jsonPayload.activitiesFoundTotal)"
 bucketOptions:
   exponentialBuckets:
     numFiniteBuckets: 15

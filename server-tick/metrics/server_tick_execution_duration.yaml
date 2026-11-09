@@ -5,7 +5,7 @@ metricDescriptor:
   metricKind: DELTA
   valueType: DISTRIBUTION
   unit: "ms"
-valueExtractor: "EXTRACT(jsonPayload.jobMetadata.tickDurationMs)"
+valueExtractor: "EXTRACT(jsonPayload.tickDurationMs)"
 bucketOptions:
   exponentialBuckets:
     numFiniteBuckets: 30

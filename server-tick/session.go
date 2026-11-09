@@ -32,6 +32,7 @@ func IsInactiveSession(s Session) bool {
 }
 
 func GetSessions(ctx context.Context, db *firestore.Client) ([]Session, error) {
+	start := time.Now()
 	now := time.Now()
 
 	// Grace period for sessions that might have just completed.
@@ -58,22 +59,36 @@ func GetSessions(ctx context.Context, db *firestore.Client) ([]Session, error) {
 		Documents(ctx).
 		GetAll()
 	if err != nil {
+		clog.WithGroupFields(ctx, "db.getSessions", clog.Fields{
+			"collection": SessionCollection,
+			"durationMs": time.Since(start).Milliseconds(),
+		})
 		return nil, err
 	}
 
-	sessions := make([]Session, 0)
+	sessions := make([]Session, 0, len(docs))
 	for _, doc := range docs {
 		s := Session{}
 		err := doc.DataTo(&s)
 		if err != nil {
+			clog.WithGroupFields(ctx, "db.getSessions", clog.Fields{
+				"collection": SessionCollection,
+				"durationMs": time.Since(start).Milliseconds(),
+			})
 			return nil, err
 		}
 		sessions = append(sessions, s)
 	}
+	clog.WithGroupFields(ctx, "db.getSessions", clog.Fields{
+		"collection":   SessionCollection,
+		"rowsReturned": len(sessions),
+		"durationMs":   time.Since(start).Milliseconds(),
+	})
 	return sessions, nil
 }
 
 func SetLastActivity(ctx context.Context, db *firestore.Client, ID, activityID string) error {
+	start := time.Now()
 	_, err := db.Collection(SessionCollection).Doc(ID).Update(ctx, []firestore.Update{
 		{
 			Path:  "lastSeenActivityId",
@@ -88,47 +103,73 @@ func SetLastActivity(ctx context.Context, db *firestore.Client, ID, activityID s
 			Value: time.Now(),
 		},
 	})
+	clog.WithGroupFields(ctx, "db.setLastActivity", clog.Fields{
+		"collection": SessionCollection,
+		"sessionId":  ID,
+		"activityId": activityID,
+		"durationMs": time.Since(start).Milliseconds(),
+	})
 	if err != nil {
-		return fmt.Errorf("failed to update session: %v", err)
+		return fmt.Errorf("failed to update session: %w", err)
 	}
 	return nil
 }
 
 func DeleteSession(ctx context.Context, db *firestore.Client, ID string) error {
+	start := time.Now()
 	_, err := db.Collection(SessionCollection).Doc(ID).Delete(ctx)
+	clog.WithGroupFields(ctx, "db.deleteSession", clog.Fields{
+		"collection": SessionCollection,
+		"sessionId":  ID,
+		"durationMs": time.Since(start).Milliseconds(),
+	})
 	if err != nil {
-		return fmt.Errorf("failed to delete session: %v", err)
+		return fmt.Errorf("failed to delete session: %w", err)
 	}
 	return nil
 }
 
 func CleanupEmptyCompletedSessions(ctx context.Context, db *firestore.Client, dryRun bool) (int, error) {
+	start := time.Now()
 	docs, err := db.Collection(SessionCollection).
 		Where("status", "==", SessionComplete).
 		Documents(ctx).
 		GetAll()
 	if err != nil {
+		clog.WithGroupFields(ctx, "sessionService.cleanupEmpty", clog.Fields{
+			"collection": SessionCollection,
+			"dryRun":     dryRun,
+			"durationMs": time.Since(start).Milliseconds(),
+		})
 		return 0, fmt.Errorf("failed to fetch completed sessions for cleanup: %w", err)
 	}
 
 	deletedCount := 0
-	for _, doc := range docs {
+	_ = clog.LoopRollup(ctx, "sessionService.cleanupEmptyItem", docs, func(iterCtx context.Context, _ int, doc *firestore.DocumentSnapshot) error {
+		clog.WithGroupField(iterCtx, "session", "docId", doc.Ref.ID)
 		var s Session
 		if err := doc.DataTo(&s); err != nil {
-			recordJobIssue(ctx, "session_cleanup_parse", "failed to parse session for cleanup", clog.Fields{"docId": doc.Ref.ID, "error": err})
-			continue
+			return fmt.Errorf("failed to parse session %s for cleanup: %w", doc.Ref.ID, err)
 		}
 
 		if len(s.AggregateIDs) == 0 {
 			if !dryRun {
-				if _, err := doc.Ref.Delete(ctx); err != nil {
-					recordJobIssue(ctx, "session_cleanup_delete", "failed to delete empty completed session", clog.Fields{"sessionId": s.ID, "error": err})
-					continue
+				if _, err := doc.Ref.Delete(iterCtx); err != nil {
+					clog.WithGroupField(iterCtx, "session", "sessionId", s.ID)
+					return fmt.Errorf("failed to delete empty completed session %s: %w", s.ID, err)
 				}
 			}
 			deletedCount++
 		}
-	}
+		return nil
+	})
+	clog.WithGroupFields(ctx, "sessionService.cleanupEmpty", clog.Fields{
+		"collection":   SessionCollection,
+		"rowsChecked":  len(docs),
+		"deletedCount": deletedCount,
+		"dryRun":       dryRun,
+		"durationMs":   time.Since(start).Milliseconds(),
+	})
 	return deletedCount, nil
 }
 
@@ -140,6 +181,7 @@ func EndOrDeleteSession(ctx context.Context, db *firestore.Client, s Session) er
 }
 
 func EndSession(ctx context.Context, db *firestore.Client, s Session) error {
+	start := time.Now()
 	completedBy := AuditField{
 		ID:       "system",
 		Username: "system",
@@ -148,7 +190,10 @@ func EndSession(ctx context.Context, db *firestore.Client, s Session) error {
 
 	summary, err := ComputeSessionSummary(ctx, db, s)
 	if err != nil {
-		recordJobIssue(ctx, "ended_session_summary", "failed to compute session summary on ending session", clog.Fields{"sessionId": s.ID, "error": err})
+		clog.WithGroupField(ctx, "sessionService.endSession", "warning", clog.Fields{
+			"type":      "ended_session_summary",
+			"sessionId": s.ID,
+		})
 	}
 
 	updates := []firestore.Update{
@@ -177,14 +222,20 @@ func EndSession(ctx context.Context, db *firestore.Client, s Session) error {
 	}
 
 	_, err = db.Collection(SessionCollection).Doc(s.ID).Update(ctx, updates)
+	clog.WithGroupFields(ctx, "db.endSession", clog.Fields{
+		"collection": SessionCollection,
+		"sessionId":  s.ID,
+		"durationMs": time.Since(start).Milliseconds(),
+	})
 	if err != nil {
-		return fmt.Errorf("failed to end session: %v", err)
+		return fmt.Errorf("failed to end session: %w", err)
 	}
 	return nil
 }
 
 func AddAggregateIDs(ctx context.Context, db *firestore.Client, sessionID string, aggregateIDs []string) error {
-	ids := make([]any, 0)
+	start := time.Now()
+	ids := make([]any, 0, len(aggregateIDs))
 	for _, d := range aggregateIDs {
 		ids = append(ids, d)
 	}
@@ -193,6 +244,12 @@ func AddAggregateIDs(ctx context.Context, db *firestore.Client, sessionID string
 			Path:  "aggregateIds",
 			Value: firestore.ArrayUnion(ids...),
 		},
+	})
+	clog.WithGroupFields(ctx, "db.addAggregateIds", clog.Fields{
+		"collection":     SessionCollection,
+		"sessionId":      sessionID,
+		"aggregateCount": len(aggregateIDs),
+		"durationMs":     time.Since(start).Milliseconds(),
 	})
 	if err != nil {
 		return err

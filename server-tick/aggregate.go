@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"serverTick/bungie"
 	"serverTick/utils"
 	"strconv"
 	"time"
 
 	"cloud.google.com/go/firestore"
+	clog "github.com/Shannor/canonical-logger"
 	"google.golang.org/api/iterator"
 )
 
@@ -19,29 +21,55 @@ func GetAggregatesByActivity(ctx context.Context, db *firestore.Client, activity
 	if len(activityIDs) == 0 {
 		return nil, nil
 	}
+	start := time.Now()
 	docs, err := db.
 		Collection(aggregateCollection).
 		Where("activityId", "in", activityIDs).
 		Documents(ctx).GetAll()
 	if err != nil {
+		clog.WithGroupFields(ctx, "db.getAggregatesByActivity", clog.Fields{
+			"collection":       aggregateCollection,
+			"activityIdsCount": len(activityIDs),
+			"durationMs":       time.Since(start).Milliseconds(),
+		})
 		return nil, err
 	}
 	results, err := utils.GetAllToStructs[Aggregate](docs)
 	if err != nil {
 		return nil, err
 	}
+	clog.WithGroupFields(ctx, "db.getAggregatesByActivity", clog.Fields{
+		"collection":       aggregateCollection,
+		"activityIdsCount": len(activityIDs),
+		"rowsReturned":     len(results),
+		"durationMs":       time.Since(start).Milliseconds(),
+	})
 	return results, nil
 }
 
 func GetPerformances(ctx context.Context, client *bungie.ClientWithResponses, db *firestore.Client, activityID string, characterID string) (map[string]InstancePerformance, error) {
+	start := time.Now()
 	id, err := strconv.ParseInt(activityID, 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("invalid activity ID: %w", err)
 	}
 
+	apiStart := time.Now()
 	resp, err := client.Destiny2GetPostGameCarnageReportWithResponse(ctx, id)
 	if err != nil {
+		clog.WithGroupFields(ctx, "bungieClient.getPostGameCarnageReport", clog.Fields{
+			"activityId": activityID,
+			"durationMs": time.Since(apiStart).Milliseconds(),
+		})
 		return nil, err
+	}
+	clog.WithGroupFields(ctx, "bungieClient.getPostGameCarnageReport", clog.Fields{
+		"activityId": activityID,
+		"statusCode": resp.StatusCode(),
+		"durationMs": time.Since(apiStart).Milliseconds(),
+	})
+	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
+		return nil, fmt.Errorf("failed to get carnage report (status %d)", resp.StatusCode())
 	}
 	data := resp.JSON200.PostGameCarnageReportData
 	if data.Entries == nil || data.ActivityDetails == nil {
@@ -63,10 +91,17 @@ func GetPerformances(ctx context.Context, client *bungie.ClientWithResponses, db
 		}
 	}
 
+	clog.WithGroupFields(ctx, "aggregateService.getPerformances", clog.Fields{
+		"activityId":          activityID,
+		"characterId":         characterID,
+		"performancesMatched": len(performances),
+		"durationMs":          time.Since(start).Milliseconds(),
+	})
 	return performances, nil
 }
 
 func SetAggregate(ctx context.Context, db *firestore.Client, userID string, characterID string, activity ActivityHistory, period time.Time, performance InstancePerformance, sessionID string) (*Aggregate, error) {
+	start := time.Now()
 	snap, link, err := FindBestFit(ctx, db, userID, characterID, period, performance.Weapons)
 	if err != nil {
 		return nil, err
@@ -83,10 +118,17 @@ func SetAggregate(ctx context.Context, db *firestore.Client, userID string, char
 	if err != nil {
 		return nil, err
 	}
+	clog.WithGroupFields(ctx, "aggregateService.setAggregate", clog.Fields{
+		"aggregateId": agg.ID,
+		"activityId":  activity.InstanceID,
+		"sessionId":   sessionID,
+		"durationMs":  time.Since(start).Milliseconds(),
+	})
 	return agg, nil
 }
 
 func AddAggregate(ctx context.Context, db *firestore.Client, characterID string, history ActivityHistory, snapshotLink SnapshotLink, performance InstancePerformance) (*Aggregate, error) {
+	start := time.Now()
 	now := time.Now()
 	sessionIDs := make([]string, 0)
 	snapshotIDs := make([]string, 0)
@@ -136,7 +178,7 @@ func AddAggregate(ctx context.Context, db *firestore.Client, characterID string,
 	}
 	if existingAggregate != nil {
 		// Partial update, adding the new data
-		_, err := db.Collection(aggregateCollection).Doc(existingAggregate.ID).Set(ctx, map[string]any{
+		updates := map[string]any{
 			"snapshotLinks": map[string]any{
 				characterID: snapshotLink,
 			},
@@ -146,12 +188,26 @@ func AddAggregate(ctx context.Context, db *firestore.Client, characterID string,
 			"sessionIds":   firestore.ArrayUnion(toInterfaceSlice(sessionIDs)...),
 			"snapshotIds":  firestore.ArrayUnion(toInterfaceSlice(snapshotIDs)...),
 			"characterIds": firestore.ArrayUnion(toInterfaceSlice(characterIDs)...),
-		}, firestore.MergeAll)
+		}
+		if history.EstimatedGameMode != nil && existingAggregate.ActivityDetails.EstimatedGameMode == nil {
+			updates["activityHistory"] = map[string]any{
+				"estimatedGameMode": *history.EstimatedGameMode,
+			}
+			existingAggregate.ActivityDetails.EstimatedGameMode = history.EstimatedGameMode
+		}
+		_, err := db.Collection(aggregateCollection).Doc(existingAggregate.ID).Set(ctx, updates, firestore.MergeAll)
 		if err != nil {
 			return nil, err
 		}
 		existingAggregate.SnapshotLinks[characterID] = snapshotLink
 		existingAggregate.Performance[characterID] = performance
+		clog.WithGroupFields(ctx, "db.addAggregate", clog.Fields{
+			"collection":      aggregateCollection,
+			"aggregateId":     existingAggregate.ID,
+			"activityId":      history.InstanceID,
+			"updatedExisting": true,
+			"durationMs":      time.Since(start).Milliseconds(),
+		})
 		return existingAggregate, nil
 	} else {
 		// Create new Doc and return object
@@ -161,7 +217,13 @@ func AddAggregate(ctx context.Context, db *firestore.Client, characterID string,
 		if err != nil {
 			return nil, err
 		}
-
+		clog.WithGroupFields(ctx, "db.addAggregate", clog.Fields{
+			"collection":      aggregateCollection,
+			"aggregateId":     aggregate.ID,
+			"activityId":      history.InstanceID,
+			"updatedExisting": false,
+			"durationMs":      time.Since(start).Milliseconds(),
+		})
 		return &aggregate, nil
 	}
 }
@@ -210,6 +272,93 @@ func buildItemsSet(ctx context.Context, db *firestore.Client, data *bungie.PostG
 		}
 	}
 	return items
+}
+
+// BackfillEstimatedGameModes iterates over all aggregate documents in Firestore,
+// computes estimatedGameMode from activityHistory.mode and activityHistory.activity,
+// and persists it on any document where it is missing or differs.
+func BackfillEstimatedGameModes(ctx context.Context, db *firestore.Client, dryRun bool) (int, error) {
+	start := time.Now()
+	docs, err := db.Collection(aggregateCollection).Documents(ctx).GetAll()
+	if err != nil {
+		clog.WithGroupFields(ctx, "aggregateService.backfillGameModes", clog.Fields{
+			"collection": aggregateCollection,
+			"dryRun":     dryRun,
+			"durationMs": time.Since(start).Milliseconds(),
+		})
+		return 0, fmt.Errorf("failed to fetch aggregates for game mode backfill: %w", err)
+	}
+
+	var (
+		updatedCount      int
+		alreadySetCount   int
+		unclassifiedCount int
+		byGameModeCounts  = make(map[string]int)
+	)
+
+	_ = clog.LoopRollup(ctx, "aggregateService.backfillGameModeItem", docs, func(iterCtx context.Context, _ int, doc *firestore.DocumentSnapshot) error {
+		defer func() {
+			if bag := clog.BagFromContext(iterCtx); bag != nil && bag.HasWarning() {
+				clog.WithGroupField(ctx, "aggregateService.backfillGameModeItem", "warning", true)
+			}
+		}()
+		clog.WithGroupField(iterCtx, "aggregate", "docId", doc.Ref.ID)
+
+		var agg Aggregate
+		if err := doc.DataTo(&agg); err != nil {
+			return fmt.Errorf("failed to parse aggregate %s: %w", doc.Ref.ID, err)
+		}
+
+		estimated := EstimateGameMode(agg.ActivityDetails.Mode, agg.ActivityDetails.Activity)
+		if estimated == nil {
+			unclassifiedCount++
+			modeVal := ""
+			if agg.ActivityDetails.Mode != nil {
+				modeVal = *agg.ActivityDetails.Mode
+			}
+			clog.WithGroupField(ctx, "aggregateService.backfillGameModes", "warning", clog.Fields{
+				"type":     "unclassified_game_mode",
+				"docId":    doc.Ref.ID,
+				"mode":     modeVal,
+				"activity": agg.ActivityDetails.Activity,
+			})
+			return nil
+		}
+
+		byGameModeCounts[string(*estimated)]++
+
+		if agg.ActivityDetails.EstimatedGameMode != nil && *agg.ActivityDetails.EstimatedGameMode == *estimated {
+			alreadySetCount++
+			return nil
+		}
+
+		if !dryRun {
+			_, err := doc.Ref.Update(iterCtx, []firestore.Update{
+				{
+					Path:  "activityHistory.estimatedGameMode",
+					Value: *estimated,
+				},
+			})
+			if err != nil {
+				return fmt.Errorf("failed to update estimatedGameMode on aggregate %s: %w", doc.Ref.ID, err)
+			}
+		}
+		updatedCount++
+		return nil
+	})
+
+	clog.WithGroupFields(ctx, "aggregateService.backfillGameModes", clog.Fields{
+		"collection":        aggregateCollection,
+		"totalInspected":    len(docs),
+		"updatedCount":      updatedCount,
+		"alreadySetCount":   alreadySetCount,
+		"unclassifiedCount": unclassifiedCount,
+		"byGameMode":        byGameModeCounts,
+		"dryRun":            dryRun,
+		"durationMs":        time.Since(start).Milliseconds(),
+	})
+
+	return updatedCount, nil
 }
 
 type Aggregate struct {

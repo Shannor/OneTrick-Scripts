@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/firestore"
+	clog "github.com/Shannor/canonical-logger"
 	"google.golang.org/api/iterator"
 )
 
@@ -28,6 +29,7 @@ func GetMembershipType(ctx context.Context, db *firestore.Client, userID string)
 	return membershipType, u.PrimaryMembershipID, nil
 }
 func GetUser(ctx context.Context, db *firestore.Client, ID string) (*User, error) {
+	start := time.Now()
 	user := User{}
 
 	q1 := firestore.PropertyFilter{
@@ -58,15 +60,30 @@ func GetUser(ctx context.Context, db *firestore.Client, ID string) (*User, error
 			break
 		}
 		if err != nil {
+			clog.WithGroupFields(ctx, "db.getUser", clog.Fields{
+				"collection": userCollection,
+				"userId":     ID,
+				"durationMs": time.Since(start).Milliseconds(),
+			})
 			return nil, err
 		}
 		err = doc.DataTo(&user)
 		if err != nil {
 			return nil, err
 		}
+		clog.WithGroupFields(ctx, "db.getUser", clog.Fields{
+			"collection": userCollection,
+			"userId":     ID,
+			"durationMs": time.Since(start).Milliseconds(),
+		})
 		return &user, nil
 	}
 
+	clog.WithGroupFields(ctx, "db.getUser", clog.Fields{
+		"collection": userCollection,
+		"userId":     ID,
+		"durationMs": time.Since(start).Milliseconds(),
+	})
 	return nil, fmt.Errorf("not found")
 }
 

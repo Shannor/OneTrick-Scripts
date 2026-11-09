@@ -666,6 +666,7 @@ type AuditField struct {
 type SessionStatus string
 
 func GetActivities(ctx context.Context, db *firestore.Client) (map[string]ActivityDefinition, error) {
+	start := time.Now()
 	docs, err := db.Collection(string(ActivityCollection)).Documents(ctx).GetAll()
 	if err != nil {
 		return nil, err
@@ -674,6 +675,11 @@ func GetActivities(ctx context.Context, db *firestore.Client) (map[string]Activi
 	if err != nil {
 		return nil, err
 	}
+	clog.WithGroupFields(ctx, "db.getActivities", clog.Fields{
+		"collection":   string(ActivityCollection),
+		"rowsReturned": len(results),
+		"durationMs":   time.Since(start).Milliseconds(),
+	})
 	return utils.ToMap[ActivityDefinition, string](results, func(t ActivityDefinition) string {
 		return strconv.FormatInt(int64(t.Hash), 10)
 	})
@@ -681,11 +687,21 @@ func GetActivities(ctx context.Context, db *firestore.Client) (map[string]Activi
 
 // GetActivity retrieves a single activity definition from the manifest by its hash
 func GetActivity(ctx context.Context, db *firestore.Client, hash int64) (*ActivityDefinition, error) {
+	start := time.Now()
 	hashStr := strconv.FormatInt(hash, 10)
 
 	doc, err := db.Collection(string(ActivityCollection)).Doc(hashStr).Get(ctx)
 	if err != nil {
-		recordManifestWarning(ctx, "missing_activity_definition", clog.Fields{"collection": string(ActivityCollection), "docId": hashStr, "error": err})
+		clog.WithGroupFields(ctx, "db.getActivity", clog.Fields{
+			"collection": string(ActivityCollection),
+			"docId":      hashStr,
+			"durationMs": time.Since(start).Milliseconds(),
+			"warning": clog.Fields{
+				"type":       "missing_activity_definition",
+				"collection": string(ActivityCollection),
+				"docId":      hashStr,
+			},
+		})
 		return nil, fmt.Errorf("failed to get activity definition: %w", err)
 	}
 
@@ -693,11 +709,17 @@ func GetActivity(ctx context.Context, db *firestore.Client, hash int64) (*Activi
 	if err := doc.DataTo(&result); err != nil {
 		return nil, fmt.Errorf("failed to convert activity definition: %w", err)
 	}
+	clog.WithGroupFields(ctx, "db.getActivity", clog.Fields{
+		"collection": string(ActivityCollection),
+		"docId":      hashStr,
+		"durationMs": time.Since(start).Milliseconds(),
+	})
 
 	return &result, nil
 }
 
 func GetActivityModes(ctx context.Context, db *firestore.Client) (map[string]ActivityModeDefinition, error) {
+	start := time.Now()
 	docs, err := db.Collection(string(ActivityModeCollection)).Documents(ctx).GetAll()
 	if err != nil {
 		return nil, err
@@ -706,6 +728,11 @@ func GetActivityModes(ctx context.Context, db *firestore.Client) (map[string]Act
 	if err != nil {
 		return nil, err
 	}
+	clog.WithGroupFields(ctx, "db.getActivityModes", clog.Fields{
+		"collection":   string(ActivityModeCollection),
+		"rowsReturned": len(results),
+		"durationMs":   time.Since(start).Milliseconds(),
+	})
 	return utils.ToMap[ActivityModeDefinition, string](results, func(t ActivityModeDefinition) string {
 		return strconv.FormatInt(t.Hash, 10)
 	})
@@ -713,11 +740,21 @@ func GetActivityModes(ctx context.Context, db *firestore.Client) (map[string]Act
 
 // GetActivityMode retrieves a single activity mode definition from the manifest by its hash
 func GetActivityMode(ctx context.Context, db *firestore.Client, hash int64) (*ActivityModeDefinition, error) {
+	start := time.Now()
 	hashStr := strconv.FormatInt(hash, 10)
 
 	doc, err := db.Collection(string(ActivityModeCollection)).Doc(hashStr).Get(ctx)
 	if err != nil {
-		recordManifestWarning(ctx, "missing_activity_mode_definition", clog.Fields{"collection": string(ActivityModeCollection), "docId": hashStr, "error": err})
+		clog.WithGroupFields(ctx, "db.getActivityMode", clog.Fields{
+			"collection": string(ActivityModeCollection),
+			"docId":      hashStr,
+			"durationMs": time.Since(start).Milliseconds(),
+			"warning": clog.Fields{
+				"type":       "missing_activity_mode_definition",
+				"collection": string(ActivityModeCollection),
+				"docId":      hashStr,
+			},
+		})
 		return nil, fmt.Errorf("failed to get activity mode definition: %w", err)
 	}
 
@@ -725,11 +762,17 @@ func GetActivityMode(ctx context.Context, db *firestore.Client, hash int64) (*Ac
 	if err := doc.DataTo(&result); err != nil {
 		return nil, fmt.Errorf("failed to convert activity mode definition: %w", err)
 	}
+	clog.WithGroupFields(ctx, "db.getActivityMode", clog.Fields{
+		"collection": string(ActivityModeCollection),
+		"docId":      hashStr,
+		"durationMs": time.Since(start).Milliseconds(),
+	})
 
 	return &result, nil
 }
 
 func GetStats(ctx context.Context, db *firestore.Client) (map[string]StatDefinition, error) {
+	start := time.Now()
 	docs, err := db.Collection(string(StatDefinitionCollection)).Documents(ctx).GetAll()
 	if err != nil {
 		return nil, err
@@ -738,12 +781,18 @@ func GetStats(ctx context.Context, db *firestore.Client) (map[string]StatDefinit
 	if err != nil {
 		return nil, err
 	}
+	clog.WithGroupFields(ctx, "db.getStats", clog.Fields{
+		"collection":   string(StatDefinitionCollection),
+		"rowsReturned": len(results),
+		"durationMs":   time.Since(start).Milliseconds(),
+	})
 	return utils.ToMap[StatDefinition, string](results, func(t StatDefinition) string {
 		return strconv.FormatInt(t.Hash, 10)
 	})
 }
 
 func GetItems(ctx context.Context, db *firestore.Client) (map[string]ItemDefinition, error) {
+	start := time.Now()
 	docs, err := db.Collection(string(ItemDefinitionCollection)).Documents(ctx).GetAll()
 	if err != nil {
 		return nil, err
@@ -752,6 +801,11 @@ func GetItems(ctx context.Context, db *firestore.Client) (map[string]ItemDefinit
 	if err != nil {
 		return nil, err
 	}
+	clog.WithGroupFields(ctx, "db.getItems", clog.Fields{
+		"collection":   string(ItemDefinitionCollection),
+		"rowsReturned": len(results),
+		"durationMs":   time.Since(start).Milliseconds(),
+	})
 	return utils.ToMap[ItemDefinition, string](results, func(t ItemDefinition) string {
 		return strconv.FormatInt(t.Hash, 10)
 	})
@@ -759,11 +813,21 @@ func GetItems(ctx context.Context, db *firestore.Client) (map[string]ItemDefinit
 
 // GetItem retrieves a single item definition from the manifest by its hash
 func GetItem(ctx context.Context, db *firestore.Client, hash int64) (*ItemDefinition, error) {
+	start := time.Now()
 	hashStr := strconv.FormatInt(hash, 10)
 
 	doc, err := db.Collection(string(ItemDefinitionCollection)).Doc(hashStr).Get(ctx)
 	if err != nil {
-		recordManifestWarning(ctx, "missing_item_definition", clog.Fields{"collection": string(ItemDefinitionCollection), "docId": hashStr, "error": err})
+		clog.WithGroupFields(ctx, "db.getItem", clog.Fields{
+			"collection": string(ItemDefinitionCollection),
+			"docId":      hashStr,
+			"durationMs": time.Since(start).Milliseconds(),
+			"warning": clog.Fields{
+				"type":       "missing_item_definition",
+				"collection": string(ItemDefinitionCollection),
+				"docId":      hashStr,
+			},
+		})
 		return nil, fmt.Errorf("failed to get item definition: %w", err)
 	}
 
@@ -771,11 +835,17 @@ func GetItem(ctx context.Context, db *firestore.Client, hash int64) (*ItemDefini
 	if err := doc.DataTo(&result); err != nil {
 		return nil, fmt.Errorf("failed to convert item definition: %w", err)
 	}
+	clog.WithGroupFields(ctx, "db.getItem", clog.Fields{
+		"collection": string(ItemDefinitionCollection),
+		"docId":      hashStr,
+		"durationMs": time.Since(start).Milliseconds(),
+	})
 
 	return &result, nil
 }
 
 func GetPerks(ctx context.Context, db *firestore.Client) (map[string]PerkDefinition, error) {
+	start := time.Now()
 	docs, err := db.Collection(string(SandboxPerkCollection)).Documents(ctx).GetAll()
 	if err != nil {
 		return nil, err
@@ -784,17 +854,32 @@ func GetPerks(ctx context.Context, db *firestore.Client) (map[string]PerkDefinit
 	if err != nil {
 		return nil, err
 	}
+	clog.WithGroupFields(ctx, "db.getPerks", clog.Fields{
+		"collection":   string(SandboxPerkCollection),
+		"rowsReturned": len(results),
+		"durationMs":   time.Since(start).Milliseconds(),
+	})
 	return utils.ToMap[PerkDefinition, string](results, func(t PerkDefinition) string {
 		return strconv.FormatInt(t.Hash, 10)
 	})
 }
 
 func GetPerk(ctx context.Context, db *firestore.Client, hash int64) (*PerkDefinition, error) {
+	start := time.Now()
 	hashStr := strconv.FormatInt(hash, 10)
 
 	doc, err := db.Collection(string(SandboxPerkCollection)).Doc(hashStr).Get(ctx)
 	if err != nil {
-		recordManifestWarning(ctx, "missing_perk_definition", clog.Fields{"collection": string(SandboxPerkCollection), "docId": hashStr, "error": err})
+		clog.WithGroupFields(ctx, "db.getPerk", clog.Fields{
+			"collection": string(SandboxPerkCollection),
+			"docId":      hashStr,
+			"durationMs": time.Since(start).Milliseconds(),
+			"warning": clog.Fields{
+				"type":       "missing_perk_definition",
+				"collection": string(SandboxPerkCollection),
+				"docId":      hashStr,
+			},
+		})
 		return nil, fmt.Errorf("failed to get item definition: %w", err)
 	}
 
@@ -802,11 +887,17 @@ func GetPerk(ctx context.Context, db *firestore.Client, hash int64) (*PerkDefini
 	if err := doc.DataTo(&result); err != nil {
 		return nil, fmt.Errorf("failed to convert perk definition: %w", err)
 	}
+	clog.WithGroupFields(ctx, "db.getPerk", clog.Fields{
+		"collection": string(SandboxPerkCollection),
+		"docId":      hashStr,
+		"durationMs": time.Since(start).Milliseconds(),
+	})
 
 	return &result, nil
 }
 
 func GetDamageTypes(ctx context.Context, db *firestore.Client) (map[string]DamageType, error) {
+	start := time.Now()
 	docs, err := db.Collection(string(DamageCollection)).Documents(ctx).GetAll()
 	if err != nil {
 		return nil, err
@@ -815,6 +906,11 @@ func GetDamageTypes(ctx context.Context, db *firestore.Client) (map[string]Damag
 	if err != nil {
 		return nil, err
 	}
+	clog.WithGroupFields(ctx, "db.getDamageTypes", clog.Fields{
+		"collection":   string(DamageCollection),
+		"rowsReturned": len(results),
+		"durationMs":   time.Since(start).Milliseconds(),
+	})
 	return utils.ToMap[DamageType, string](results, func(t DamageType) string {
 		return strconv.FormatInt(t.Hash, 10)
 	})
@@ -822,8 +918,10 @@ func GetDamageTypes(ctx context.Context, db *firestore.Client) (map[string]Damag
 
 // batchedFetch is an internal helper to fetch documents by string IDs in batches of up to 30.
 func batchedFetch[T any](ctx context.Context, db *firestore.Client, collection ManifestCollection, idStrs []string) ([]T, error) {
+	start := time.Now()
 	const maxBatch = 30
 	var out []T
+	missingCount := 0
 	for i := 0; i < len(idStrs); i += maxBatch {
 		end := min(i+maxBatch, len(idStrs))
 		batch := idStrs[i:end]
@@ -837,7 +935,12 @@ func batchedFetch[T any](ctx context.Context, db *firestore.Client, collection M
 		}
 		for _, doc := range docs {
 			if !doc.Exists() {
-				recordManifestWarning(ctx, "missing_manifest_definition", clog.Fields{"collection": string(collection), "docId": doc.Ref.ID})
+				missingCount++
+				clog.WithGroupField(ctx, "db.batchedFetch."+string(collection), "warning", clog.Fields{
+					"type":       "missing_manifest_definition",
+					"collection": string(collection),
+					"docId":      doc.Ref.ID,
+				})
 			}
 		}
 		items, err := utils.GetAllToStructs[T](docs)
@@ -846,6 +949,13 @@ func batchedFetch[T any](ctx context.Context, db *firestore.Client, collection M
 		}
 		out = append(out, items...)
 	}
+	clog.WithGroupFields(ctx, "db.batchedFetch."+string(collection), clog.Fields{
+		"collection":     string(collection),
+		"requestedCount": len(idStrs),
+		"rowsReturned":   len(out),
+		"missingCount":   missingCount,
+		"durationMs":     time.Since(start).Milliseconds(),
+	})
 	return out, nil
 }
 
@@ -928,6 +1038,7 @@ func GetDamageTypesByIDs(ctx context.Context, db *firestore.Client, ids []int64)
 }
 
 func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.ClientWithResponses, membershipID int64, membershipType int64, items []bungie.ItemComponent, stats map[string]StatDefinition) (Loadout, error) {
+	start := time.Now()
 	loadout := make(Loadout)
 	destinyItems := make(map[string]bungie.DestinyItem)
 	destinyItemStylesMapping := make(map[string]string)
@@ -937,32 +1048,46 @@ func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.Clie
 		itemHashes []int64
 		perkHashes []int64
 	)
-	for _, item := range items {
+	_ = clog.LoopRollup(ctx, "loadoutService.fetchItemDetails", items, func(itemCtx context.Context, _ int, item bungie.ItemComponent) error {
+		defer func() {
+			if bag := clog.BagFromContext(itemCtx); bag != nil && bag.HasWarning() {
+				clog.WithGroupField(ctx, "loadoutService.fetchItemDetails", "warning", true)
+			}
+		}()
 		if item.ItemInstanceId == nil {
-			recordJobIssue(ctx, "item_instance", "no instance id found", nil)
-			continue
+			clog.WithGroupField(itemCtx, "item", "warning", clog.Fields{
+				"type": "missing_item_instance_id",
+			})
+			return nil
 		}
-		d, err := GetItemDetails(ctx, client, membershipID, membershipType, *item.ItemInstanceId)
+		clog.WithGroupField(itemCtx, "item", "instanceId", *item.ItemInstanceId)
+		d, err := GetItemDetails(itemCtx, client, membershipID, membershipType, *item.ItemInstanceId)
 		if err != nil {
-			recordJobIssue(ctx, "item_details", "failed to get item from API", clog.Fields{"error": err, "instanceId": *item.ItemInstanceId})
-			continue
+			return fmt.Errorf("failed to get item %s from API: %w", *item.ItemInstanceId, err)
 		}
 		if d == nil {
-			recordJobIssue(ctx, "item_details", "destiny item was nil", clog.Fields{"instanceId": *item.ItemInstanceId})
-			continue
+			clog.WithGroupField(itemCtx, "item", "warning", clog.Fields{
+				"type":       "nil_destiny_item",
+				"instanceId": *item.ItemInstanceId,
+			})
+			return nil
 		}
 		destinyItems[strconv.Itoa(int(*item.ItemHash))] = *d
 		if item.OverrideStyleItemHash != nil {
 			itemHashes = append(itemHashes, int64(*item.OverrideStyleItemHash))
 			destinyItemStylesMapping[strconv.Itoa(int(*item.ItemHash))] = strconv.Itoa(int(*item.OverrideStyleItemHash))
 		}
-	}
+		return nil
+	})
 
 	for instanceID, item := range destinyItems {
 		// Base Item Hash
 		itemID, err := strconv.ParseInt(instanceID, 10, 64)
 		if err != nil {
-			recordJobIssue(ctx, "item_hash", "failed to convert item hash", clog.Fields{"itemHash": instanceID, "error": err})
+			clog.WithGroupField(ctx, "loadoutService.buildLoadout", "warning", clog.Fields{
+				"type":     "invalid_item_hash",
+				"itemHash": instanceID,
+			})
 			continue
 		}
 		itemHashes = append(itemHashes, itemID)
@@ -1014,13 +1139,18 @@ func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.Clie
 		snap.BucketHash = &result.BaseInfo.BucketHash
 		loadout[strconv.FormatInt(snap.ItemProperties.BaseInfo.BucketHash, 10)] = snap
 	}
+	clog.WithGroupFields(ctx, "loadoutService.buildLoadout", clog.Fields{
+		"itemsResolved": len(loadout),
+		"durationMs":    time.Since(start).Milliseconds(),
+	})
 	return loadout, nil
 }
 func GetItemDetails(ctx context.Context, client *bungie.ClientWithResponses, membershipID int64, membershipType int64, instanceID string) (*bungie.DestinyItem, error) {
+	start := time.Now()
 	components := []int32{ItemPerksCode, ItemStatsCode, ItemSocketsCode, ItemCommonDataCode, ItemInstanceCode}
 	weaponInstanceIDInt64, err := strconv.ParseInt(instanceID, 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert membershipId to int64: %v", err)
+		return nil, fmt.Errorf("failed to convert membershipId to int64: %w", err)
 	}
 	params := bungie.Destiny2GetItemParams{Components: &components}
 	response, err := client.Destiny2GetItemWithResponse(
@@ -1031,9 +1161,18 @@ func GetItemDetails(ctx context.Context, client *bungie.ClientWithResponses, mem
 		&params,
 	)
 	if err != nil {
+		clog.WithGroupFields(ctx, "bungieClient.getItem", clog.Fields{
+			"instanceId": instanceID,
+			"durationMs": time.Since(start).Milliseconds(),
+		})
 		return nil, err
 	}
-	if response.JSON200.DestinyItem == nil {
+	clog.WithGroupFields(ctx, "bungieClient.getItem", clog.Fields{
+		"instanceId": instanceID,
+		"statusCode": response.StatusCode(),
+		"durationMs": time.Since(start).Milliseconds(),
+	})
+	if response.JSON200 == nil || response.JSON200.DestinyItem == nil {
 		return nil, nil
 	}
 

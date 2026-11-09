@@ -106,7 +106,10 @@ func generatePerks(ctx context.Context, item *bungie.DestinyItem, perks map[stri
 	for _, p := range *item.Perks.Data.Perks {
 		perk, ok := perks[strconv.Itoa(int(*p.PerkHash))]
 		if !ok {
-			recordManifestWarning(ctx, "missing_perk", clog.Fields{"perkHash": *p.PerkHash})
+			clog.WithGroupField(ctx, "converterService.generatePerks", "warning", clog.Fields{
+				"type":     "missing_perk",
+				"perkHash": *p.PerkHash,
+			})
 			continue
 		}
 		if !perk.IsDisplayable {
@@ -126,12 +129,17 @@ func generateSockets(ctx context.Context, item *bungie.DestinyItem, items map[st
 	var sockets []Socket
 	for _, s := range *item.Sockets.Data.Sockets {
 		if s.PlugHash == nil {
-			recordJobIssue(ctx, "socket_data", "socket has no plug hash", nil)
+			clog.WithGroupField(ctx, "converterService.generateSockets", "warning", clog.Fields{
+				"type": "missing_plug_hash",
+			})
 			continue
 		}
 		socket, ok := items[strconv.Itoa(int(*s.PlugHash))]
 		if !ok {
-			recordManifestWarning(ctx, "missing_socket", clog.Fields{"socketHash": *s.PlugHash})
+			clog.WithGroupField(ctx, "converterService.generateSockets", "warning", clog.Fields{
+				"type":       "missing_socket",
+				"socketHash": *s.PlugHash,
+			})
 			continue
 		}
 
@@ -154,12 +162,18 @@ func generateStats(ctx context.Context, item *bungie.DestinyItem, statDefinition
 	stats := make(Stats)
 	for key, s := range *item.Stats.Data.Stats {
 		if s.StatHash == nil || s.Value == nil {
-			recordJobIssue(ctx, "stat_data", "missing stat hash or value for stat", clog.Fields{"statKey": key})
+			clog.WithGroupField(ctx, "converterService.generateStats", "warning", clog.Fields{
+				"type":    "missing_stat_hash_or_value",
+				"statKey": key,
+			})
 			continue
 		}
 		stat, ok := statDefinitions[strconv.Itoa(int(*s.StatHash))]
 		if !ok {
-			recordManifestWarning(ctx, "missing_stat_definition", clog.Fields{"statHash": *s.StatHash})
+			clog.WithGroupField(ctx, "converterService.generateStats", "warning", clog.Fields{
+				"type":     "missing_stat_definition",
+				"statHash": *s.StatHash,
+			})
 			continue
 		}
 		value := int64(*s.Value)
@@ -195,7 +209,9 @@ func transformD2StatValue(ctx context.Context, item *bungie.HistoricalStatsValue
 		return nil
 	}
 	if item.Basic == nil {
-		recordJobIssue(ctx, "stat_value", "missing basic value for stat", nil)
+		clog.WithGroupField(ctx, "converterService.transformD2StatValue", "warning", clog.Fields{
+			"type": "missing_basic_stat_value",
+		})
 		return nil
 	}
 	result := &UniqueStatValue{
@@ -234,17 +250,19 @@ func TransformHistoricActivity(ctx context.Context, history *bungie.HistoricalSt
 		return nil
 	}
 	mode := ActivityModeTypeToString(ctx, (*bungie.CurrentActivityModeType)(history.Mode))
+	estimatedGameMode := EstimateGameMode(&mode, directorDef.DisplayProperties.Name)
 	return &ActivityHistory{
-		ActivityHash: *uintToInt64(history.DirectorActivityHash),
-		InstanceID:   *history.InstanceId,
-		IsPrivate:    history.IsPrivate,
-		Mode:         &mode,
-		ReferenceID:  *uintToInt64(history.ReferenceId),
-		Location:     activityDefinition.DisplayProperties.Name,
-		Description:  activityDefinition.DisplayProperties.Description,
-		Activity:     directorDef.DisplayProperties.Name,
-		ImageURL:     setBaseBungieURL(&activityDefinition.PgcrImage),
-		ActivityIcon: setBaseBungieURL(&modeDefinition.DisplayProperties.Icon),
+		ActivityHash:      *uintToInt64(history.DirectorActivityHash),
+		InstanceID:        *history.InstanceId,
+		IsPrivate:         history.IsPrivate,
+		Mode:              &mode,
+		EstimatedGameMode: estimatedGameMode,
+		ReferenceID:       *uintToInt64(history.ReferenceId),
+		Location:          activityDefinition.DisplayProperties.Name,
+		Description:       activityDefinition.DisplayProperties.Description,
+		Activity:          directorDef.DisplayProperties.Name,
+		ImageURL:          setBaseBungieURL(&activityDefinition.PgcrImage),
+		ActivityIcon:      setBaseBungieURL(&modeDefinition.DisplayProperties.Icon),
 	}
 }
 
@@ -270,12 +288,18 @@ func TransformPeriodGroup(ctx context.Context, period *bungie.StatsPeriodGroup, 
 
 	definition, ok := activities[strconv.Itoa(int(*period.ActivityDetails.ReferenceId))]
 	if !ok {
-		recordManifestWarning(ctx, "missing_activity_definition", clog.Fields{"referenceId": *period.ActivityDetails.ReferenceId})
+		clog.WithGroupField(ctx, "converterService.transformPeriodGroup", "warning", clog.Fields{
+			"type":        "missing_activity_definition",
+			"referenceId": *period.ActivityDetails.ReferenceId,
+		})
 		return nil
 	}
 	directorDefinition, ok := directorDefintions[strconv.Itoa(int(*period.ActivityDetails.DirectorActivityHash))]
 	if !ok {
-		recordManifestWarning(ctx, "missing_director_activity_definition", clog.Fields{"directorActivityHash": *period.ActivityDetails.DirectorActivityHash})
+		clog.WithGroupField(ctx, "converterService.transformPeriodGroup", "warning", clog.Fields{
+			"type":                 "missing_director_activity_definition",
+			"directorActivityHash": *period.ActivityDetails.DirectorActivityHash,
+		})
 		return nil
 	}
 
@@ -297,26 +321,86 @@ func TransformPeriodGroup(ctx context.Context, period *bungie.StatsPeriodGroup, 
 		activityMode = modes[strconv.Itoa(int(*period.ActivityDetails.Mode))]
 	}
 	mode := ActivityModeTypeToString(ctx, (*bungie.CurrentActivityModeType)(period.ActivityDetails.Mode))
-	if directorDefinition.DisplayProperties.Name == "Iron Banner: Tribute" || strings.Contains(strings.ToLower(directorDefinition.DisplayProperties.Name), "tribute") {
-		mode = "Iron Banner Tribute"
-	}
+	estimatedGameMode := EstimateGameMode(&mode, directorDefinition.DisplayProperties.Name)
 	activityIcon := ""
 	if activityMode.DisplayProperties.Icon != "" {
 		activityIcon = setBaseBungieURL(&activityMode.DisplayProperties.Icon)
 	}
 	return &ActivityHistory{
-		ActivityHash: *uintToInt64(period.ActivityDetails.DirectorActivityHash),
-		InstanceID:   *period.ActivityDetails.InstanceId,
-		IsPrivate:    period.ActivityDetails.IsPrivate,
-		Mode:         &mode,
-		ReferenceID:  *uintToInt64(period.ActivityDetails.ReferenceId),
-		Location:     definition.DisplayProperties.Name,
-		Description:  definition.DisplayProperties.Description,
-		Activity:     directorDefinition.DisplayProperties.Name,
-		ImageURL:     setBaseBungieURL(&definition.PgcrImage),
-		ActivityIcon: activityIcon,
-		Period:       *period.Period,
+		ActivityHash:      *uintToInt64(period.ActivityDetails.DirectorActivityHash),
+		InstanceID:        *period.ActivityDetails.InstanceId,
+		IsPrivate:         period.ActivityDetails.IsPrivate,
+		Mode:              &mode,
+		EstimatedGameMode: estimatedGameMode,
+		ReferenceID:       *uintToInt64(period.ActivityDetails.ReferenceId),
+		Location:          definition.DisplayProperties.Name,
+		Description:       definition.DisplayProperties.Description,
+		Activity:          directorDefinition.DisplayProperties.Name,
+		ImageURL:          setBaseBungieURL(&definition.PgcrImage),
+		ActivityIcon:      activityIcon,
+		Period:            *period.Period,
 	}
+}
+
+// EstimateGameMode classifies an activity into one of the four high-level PvP GameMode buckets
+// ("ironBanner", "trials", "competitive", "quickplay") using both the Bungie mode string and
+// the director playlist activity name without mutating the original fields.
+func EstimateGameMode(mode *string, activity string) *GameMode {
+	modeLower := ""
+	if mode != nil {
+		modeLower = strings.ToLower(strings.TrimSpace(*mode))
+	}
+	actLower := strings.ToLower(strings.TrimSpace(activity))
+
+	// 1. Iron Banner (e.g. mode="Iron Banner Control" with activity="Control: Matchmade", or activity="Iron Banner: Tribute" / "Eruption: Matchmade")
+	if strings.Contains(modeLower, "iron banner") ||
+		strings.Contains(actLower, "iron banner") ||
+		strings.Contains(actLower, "eruption") ||
+		strings.Contains(actLower, "fortress") ||
+		strings.Contains(actLower, "tribute") {
+		gm := GameModeIronBanner
+		return &gm
+	}
+
+	// 2. Trials of Osiris
+	if strings.Contains(modeLower, "trials") || strings.Contains(actLower, "trials") {
+		gm := GameModeTrials
+		return &gm
+	}
+
+	// 3. Competitive (e.g. activity="Competitive: Matchmade" or "Competitive" with mode="Clash Quickplay" / "Zone Control", or mode="Survival" / "Control Competitive" / "Clash Competitive")
+	if strings.Contains(actLower, "competitive") ||
+		strings.Contains(modeLower, "competitive") ||
+		modeLower == "survival" {
+		gm := GameModeCompetitive
+		return &gm
+	}
+
+	// 4. Quickplay (standard Crucible modes not matched by Iron Banner, Trials, or Competitive)
+	if modeLower != "" && modeLower != "unknown" &&
+		modeLower != "pve" && modeLower != "raid" && modeLower != "nightfall" && modeLower != "gambit" &&
+		!strings.Contains(modeLower, "private matches") {
+		gm := GameModeQuickplay
+		return &gm
+	}
+	if strings.Contains(actLower, "control") ||
+		strings.Contains(actLower, "clash") ||
+		strings.Contains(actLower, "quickplay") ||
+		strings.Contains(actLower, "rumble") ||
+		strings.Contains(actLower, "supremacy") ||
+		strings.Contains(actLower, "mayhem") ||
+		strings.Contains(actLower, "relic") ||
+		strings.Contains(actLower, "checkmate") ||
+		strings.Contains(actLower, "momentum") ||
+		strings.Contains(actLower, " rift") ||
+		strings.HasPrefix(actLower, "rift") ||
+		strings.Contains(actLower, "doubles") ||
+		strings.Contains(actLower, "elimination") {
+		gm := GameModeQuickplay
+		return &gm
+	}
+
+	return nil
 }
 
 func ToPlayerStats(values *map[string]bungie.HistoricalStatsValue) *PlayerStats {
@@ -411,7 +495,9 @@ func WeaponsToInstanceWeapons(values *[]bungie.HistoricalWeaponStats, items map[
 
 func ActivityModeTypeToString(ctx context.Context, modeType *bungie.CurrentActivityModeType) string {
 	if modeType == nil {
-		recordJobIssue(ctx, "activity_mode", "activity mode type is nil", nil)
+		clog.WithGroupField(ctx, "converterService.activityModeTypeToString", "warning", clog.Fields{
+			"type": "nil_activity_mode",
+		})
 		return "Unknown"
 	}
 	switch *modeType {
@@ -448,7 +534,7 @@ func ActivityModeTypeToString(ctx context.Context, modeType *bungie.CurrentActiv
 	case bungie.CurrentActivityModeTypeIronBannerClash:
 		return "Iron Banner Clash"
 	case bungie.CurrentActivityModeTypeIronBannerSupremacy:
-		return "Iron Banner Tribute / Supremacy"
+		return "Iron Banner Supremacy"
 	case bungie.CurrentActivityModeTypePrivateMatchesSurvival:
 		return "Private Matches Survival"
 	case bungie.CurrentActivityModeTypeTrialsSurvival:
@@ -480,7 +566,10 @@ func generateClassStats(ctx context.Context, statDefinitions map[string]StatDefi
 	for key, value := range stats {
 		info, ok := statDefinitions[key]
 		if !ok {
-			recordManifestWarning(ctx, "missing_stat_definition", clog.Fields{"statKey": key})
+			clog.WithGroupField(ctx, "converterService.generateClassStats", "warning", clog.Fields{
+				"type":    "missing_stat_definition",
+				"statKey": key,
+			})
 			continue
 		}
 		i := ClassStat{

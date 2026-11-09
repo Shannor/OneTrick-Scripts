@@ -5,7 +5,7 @@ metricDescriptor:
   metricKind: DELTA
   valueType: DISTRIBUTION
   unit: "1"
-valueExtractor: "EXTRACT(jsonPayload.jobMetadata.loadoutsSaved)"
+valueExtractor: "EXTRACT(jsonPayload.loadoutsSaved)"
 bucketOptions:
   exponentialBuckets:
     numFiniteBuckets: 15

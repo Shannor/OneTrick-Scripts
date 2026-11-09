@@ -12,9 +12,9 @@
 
 ## Logging
 
-This job requires Go 1.26.4 or newer. The job uses `clog.Run` as its sole event boundary and `clog.WithGroupFields` to add metadata; each execution emits one canonical `server-tick-success` or `server-tick-failure` JSON event to stdout. Cloud Run ingests that structured stdout JSON into Cloud Logging; no separate logging service client is used. When `CLOUD_RUN_JOB` is set, the event is compact JSON; local runs use pretty-printed JSON with the same fields. The `slog` API is used only to configure Clog's output handler, not for job or helper logging. Task details and processing counters are grouped under `jobMetadata`; `issueCount` and `manifestWarningCount` retain totals while `lastIssue` and `lastManifestWarning` keep only the latest structured detail so repeated issues cannot grow the event without bound.
+This job requires Go 1.26.4 or newer. The job uses `clog.Run` as its sole event boundary, `clog.WithFields` for root-level execution metrics, and `clog.WithGroupFields` / `clog.WithGroupField` across the request, service, and database (`db.*`) layers; each execution emits one canonical `server-tick-success` or `server-tick-failure` JSON event to stdout. Cloud Run ingests that structured stdout JSON into Cloud Logging under `jsonPayload`; no separate logging service client is used. When `CLOUD_RUN_JOB` is set, the event is compact JSON; local runs use pretty-printed JSON with the same fields. Warnings recorded under `"warning"` keys in service/DB groups automatically escalate the canonical event severity to `WARNING`.
 
-The custom metrics select canonical job events and read counters from `jobMetadata`. Deploy the metric definitions after upgrading the job; the metrics now count one event per execution rather than separate operational records. The run-count metric includes successful events only.
+The custom metrics select canonical job events and read root-level counters from `jsonPayload`. Deploy the metric definitions after upgrading the job; the metrics now count one event per execution rather than separate operational records. The run-count metric includes successful events only.
 
 ## Session Inactivity Cutoff
 

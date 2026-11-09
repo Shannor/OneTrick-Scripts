@@ -18,20 +18,22 @@ import (
 	clog "github.com/Shannor/canonical-logger"
 )
 
-func TestRunJobEmitsCanonicalSuccessEvent(t *testing.T) {
+func TestRunEmitsCanonicalSuccessEvent(t *testing.T) {
 	var output bytes.Buffer
 	ctx := testLoggingContext(&output)
 
-	code := runJob(ctx, "server-tick", func(ctx context.Context) error {
-		clog.WithGroupFields(ctx, "jobMetadata", clog.Fields{
-			"taskIndex":         int64(2),
+	err := clog.Run(ctx, "server-tick", func(ctx context.Context) error {
+		clog.WithGroupFields(ctx, "request", clog.Fields{
+			"taskIndex": int64(2),
+		})
+		clog.WithFields(ctx, clog.Fields{
 			"sessionsProcessed": 3,
 		})
 		return nil
 	})
 
-	if code != 0 {
-		t.Fatalf("runJob() exit code = %d, want 0", code)
+	if err != nil {
+		t.Fatalf("clog.Run() error = %v, want nil", err)
 	}
 	event := decodeEvent(t, &output)
 	if event["message"] != "server-tick-success" {
@@ -43,23 +45,26 @@ func TestRunJobEmitsCanonicalSuccessEvent(t *testing.T) {
 	if event["severity"] != "INFO" {
 		t.Errorf("event severity = %v, want INFO", event["severity"])
 	}
-	job, ok := event["jobMetadata"].(map[string]any)
-	if !ok || job["taskIndex"] != float64(2) || job["sessionsProcessed"] != float64(3) {
-		t.Errorf("event job metadata = %v, want taskIndex 2 and sessionsProcessed 3", event["jobMetadata"])
+	req, ok := event["request"].(map[string]any)
+	if !ok || req["taskIndex"] != float64(2) {
+		t.Errorf("event request = %v, want taskIndex 2", event["request"])
+	}
+	if event["sessionsProcessed"] != float64(3) {
+		t.Errorf("event sessionsProcessed = %v, want 3", event["sessionsProcessed"])
 	}
 }
 
-func TestRunJobEmitsCanonicalFailureAndReturnsNonzero(t *testing.T) {
+func TestRunEmitsCanonicalFailureAndReturnsError(t *testing.T) {
 	var output bytes.Buffer
 	ctx := testLoggingContext(&output)
 
-	code := runJob(ctx, "server-tick", func(ctx context.Context) error {
-		clog.WithGroupFields(ctx, "jobMetadata", clog.Fields{"taskIndex": int64(4)})
+	err := clog.Run(ctx, "server-tick", func(ctx context.Context) error {
+		clog.WithGroupFields(ctx, "request", clog.Fields{"taskIndex": int64(4)})
 		return errors.New("test failure")
 	})
 
-	if code != 1 {
-		t.Fatalf("runJob() exit code = %d, want 1", code)
+	if err == nil {
+		t.Fatalf("clog.Run() error = nil, want error")
 	}
 	event := decodeEvent(t, &output)
 	if event["message"] != "server-tick-failure" {
@@ -73,16 +78,16 @@ func TestRunJobEmitsCanonicalFailureAndReturnsNonzero(t *testing.T) {
 	}
 }
 
-func TestServerTickConfigurationFailureIsCanonicalAndNonzero(t *testing.T) {
+func TestServerTickConfigurationFailureIsCanonical(t *testing.T) {
 	t.Setenv("CLOUD_RUN_TASK_INDEX", "17")
 	t.Setenv("SKIP_SAVE", "invalid")
 	var output bytes.Buffer
 	ctx := testLoggingContext(&output)
 
-	code := runJob(ctx, "server-tick", runServerTick)
+	err := clog.Run(ctx, "server-tick", runServerTick)
 
-	if code != 1 {
-		t.Fatalf("runJob() exit code = %d, want 1", code)
+	if err == nil {
+		t.Fatalf("clog.Run() error = nil, want configuration error")
 	}
 	events := decodeEvents(t, &output)
 	if len(events) != 1 {
@@ -92,20 +97,16 @@ func TestServerTickConfigurationFailureIsCanonicalAndNonzero(t *testing.T) {
 	if event["message"] != "server-tick-failure" || event["severity"] != "ERROR" {
 		t.Errorf("configuration failure event = %v, want server-tick-failure with ERROR severity", event)
 	}
-	job, ok := event["jobMetadata"].(map[string]any)
-	if !ok || job["taskIndex"] != "17" {
-		t.Errorf("event job metadata = %v, want taskIndex 17", event["jobMetadata"])
+	req, ok := event["request"].(map[string]any)
+	if !ok || req["taskIndex"] != "17" {
+		t.Errorf("event request metadata = %v, want taskIndex 17", event["request"])
 	}
-	if job["issueCount"] != float64(1) {
-		t.Errorf("issue count = %v, want 1", job["issueCount"])
-	}
-	issue, ok := job["lastIssue"].(map[string]any)
-	if !ok || issue["type"] != "configuration" || issue["message"] != "failed to get config" {
-		t.Errorf("last issue = %v, want failed configuration details", job["lastIssue"])
+	if event["errorsTotal"] != float64(1) {
+		t.Errorf("errorsTotal = %v, want 1", event["errorsTotal"])
 	}
 }
 
-func TestServerTickEmulatorQueryTimeoutIsCanonicalAndNonzero(t *testing.T) {
+func TestServerTickEmulatorQueryTimeoutIsCanonical(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to start unresponsive local endpoint: %v", err)
@@ -142,10 +143,10 @@ func TestServerTickEmulatorQueryTimeoutIsCanonicalAndNonzero(t *testing.T) {
 			ctx, cancel := context.WithTimeout(testLoggingContext(&output), tt.callerTimeout)
 			defer cancel()
 
-			code := runJob(ctx, "server-tick", runServerTick)
+			err := clog.Run(ctx, "server-tick", runServerTick)
 
-			if code != 1 {
-				t.Fatalf("runJob() exit code = %d, want 1", code)
+			if err == nil {
+				t.Fatalf("clog.Run() error = nil, want timeout error")
 			}
 			events := decodeEvents(t, &output)
 			if len(events) != 1 {
@@ -155,9 +156,20 @@ func TestServerTickEmulatorQueryTimeoutIsCanonicalAndNonzero(t *testing.T) {
 			if event["message"] != "server-tick-failure" || event["severity"] != "ERROR" {
 				t.Errorf("emulator query failure event = %v, want server-tick-failure with ERROR severity", event)
 			}
-			job, ok := event["jobMetadata"].(map[string]any)
-			if !ok || job["firestoreEmulatorHost"] != endpoint || job["errorsTotal"] != float64(1) {
-				t.Errorf("emulator failure metadata = %v, want endpoint %q and errorsTotal 1", event["jobMetadata"], endpoint)
+			req, ok := event["request"].(map[string]any)
+			if !ok || req["firestoreEmulatorHost"] != endpoint {
+				t.Errorf("emulator request metadata = %v, want endpoint %q", event["request"], endpoint)
+			}
+			if event["errorsTotal"] != float64(1) {
+				t.Errorf("emulator errorsTotal = %v, want 1", event["errorsTotal"])
+			}
+			dbGroup, ok := event["db"].(map[string]any)
+			if !ok {
+				t.Fatalf("event db group = %v, want nested db group", event["db"])
+			}
+			getSessions, ok := dbGroup["getSessions"].(map[string]any)
+			if !ok || getSessions["collection"] != SessionCollection {
+				t.Errorf("db.getSessions = %v, want collection %q", dbGroup["getSessions"], SessionCollection)
 			}
 			errorText := fmt.Sprint(event["error"])
 			if !strings.Contains(errorText, endpoint) {
@@ -165,10 +177,6 @@ func TestServerTickEmulatorQueryTimeoutIsCanonicalAndNonzero(t *testing.T) {
 			}
 			if got := strings.Contains(errorText, "timed out after"); got != tt.wantEmulatorTimeout {
 				t.Errorf("canonical error = %v, emulator timeout attribution = %t, want %t", event["error"], got, tt.wantEmulatorTimeout)
-			}
-			issue, ok := job["lastIssue"].(map[string]any)
-			if !ok || issue["type"] != "session_query" || !strings.Contains(fmt.Sprint(issue["error"]), endpoint) {
-				t.Errorf("emulator issue metadata = %v, want session query failure for %q", job["lastIssue"], endpoint)
 			}
 			if tt.wantEmulatorTimeout && ctx.Err() != nil {
 				t.Errorf("caller context error = %v, want nil when emulator deadline expires first", ctx.Err())
@@ -179,95 +187,160 @@ func TestServerTickEmulatorQueryTimeoutIsCanonicalAndNonzero(t *testing.T) {
 	}
 }
 
-func TestRunJobEmitsOneCanonicalEventWithDirectClogMetadata(t *testing.T) {
+func TestConverterManifestWarningsEscalateSeverityToWarning(t *testing.T) {
 	var output bytes.Buffer
 	ctx := testLoggingContext(&output)
 
-	code := runJob(ctx, "server-tick", func(ctx context.Context) error {
-		clog.WithGroupFields(ctx, "jobMetadata", clog.Fields{"sessionsProcessed": 5})
+	err := clog.Run(ctx, "server-tick", func(ctx context.Context) error {
+		generateClassStats(ctx, map[string]StatDefinition{}, map[string]int32{"missing": 10})
 		return nil
 	})
 
-	if code != 0 {
-		t.Fatalf("runJob() exit code = %d, want 0", code)
+	if err != nil {
+		t.Fatalf("clog.Run() error = %v, want nil", err)
 	}
-	events := decodeEvents(t, &output)
-	if len(events) != 1 {
-		t.Fatalf("job emitted %d records, want one: %v", len(events), events)
+	event := decodeEvent(t, &output)
+	if event["severity"] != "WARNING" {
+		t.Errorf("event severity = %v, want WARNING when manifest definition is missing", event["severity"])
 	}
-	event := events[0]
+	converterSvc, ok := event["converterService"].(map[string]any)
+	if !ok {
+		t.Fatalf("converterService group = %v, want object", event["converterService"])
+	}
+	classStats, ok := converterSvc["generateClassStats"].(map[string]any)
+	if !ok {
+		t.Fatalf("converterService.generateClassStats = %v, want object", converterSvc["generateClassStats"])
+	}
+	warning, ok := classStats["warning"].(map[string]any)
+	if !ok || warning["type"] != "missing_stat_definition" || warning["statKey"] != "missing" {
+		t.Errorf("warning = %v, want missing_stat_definition for statKey missing", classStats["warning"])
+	}
+}
+
+func TestEstimateGameModeClassifiesProductionCombinations(t *testing.T) {
+	tests := []struct {
+		mode     string
+		activity string
+		want     GameMode
+	}{
+		// Competitive matches
+		{mode: "Clash Quickplay", activity: "Competitive: Matchmade", want: GameModeCompetitive},
+		{mode: "Zone Control", activity: "Competitive: Matchmade", want: GameModeCompetitive},
+		{mode: "Clash Quickplay", activity: "Competitive", want: GameModeCompetitive},
+		{mode: "Rift", activity: "Competitive", want: GameModeCompetitive},
+		{mode: "Survival", activity: "Competitive", want: GameModeCompetitive},
+		{mode: "Control Competitive", activity: "Competitive", want: GameModeCompetitive},
+		{mode: "Clash Competitive", activity: "Competitive", want: GameModeCompetitive},
+		// Quickplay matches
+		{mode: "Control Quickplay", activity: "Control: Matchmade", want: GameModeQuickplay},
+		{mode: "Control Quickplay", activity: "Control", want: GameModeQuickplay},
+		{mode: "Clash Quickplay", activity: "Clash 3v3: Matchmade", want: GameModeQuickplay},
+		{mode: "Zone Control", activity: "Zone Control: Matchmade", want: GameModeQuickplay},
+		{mode: "Zone Control", activity: "Cutting Edge: Zone Control: Matchmade", want: GameModeQuickplay},
+		// Iron Banner matches
+		{mode: "Iron Banner Control", activity: "Control: Matchmade", want: GameModeIronBanner},
+		{mode: "Iron Banner Control", activity: "Iron Banner: Control", want: GameModeIronBanner},
+		{mode: "Iron Banner Supremacy", activity: "Iron Banner: Tribute", want: GameModeIronBanner},
+		{mode: "Iron Banner Clash", activity: "Eruption: Matchmade", want: GameModeIronBanner},
+		{mode: "Iron Banner Clash", activity: "Iron Banner: Eruption", want: GameModeIronBanner},
+		// Trials of Osiris matches
+		{mode: "Trials of Osiris", activity: "Trials of Osiris: Matchmade", want: GameModeTrials},
+		{mode: "Trials of Osiris", activity: "Trials of Osiris", want: GameModeTrials},
+		{mode: "Trials Survival", activity: "Trials of Osiris", want: GameModeTrials},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.mode+"|"+tt.activity, func(t *testing.T) {
+			mode := tt.mode
+			got := EstimateGameMode(&mode, tt.activity)
+			if got == nil || *got != tt.want {
+				t.Errorf("EstimateGameMode(%q, %q) = %v, want %q", tt.mode, tt.activity, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoopRollupSummarizesSessionsAndRetainsOnlyFailedSnapshots(t *testing.T) {
+	var output bytes.Buffer
+	ctx := testLoggingContext(&output)
+
+	sessions := []Session{
+		{ID: "sess-1", UserID: "user-1", CharacterID: "char-1"},
+		{ID: "sess-2", UserID: "user-2", CharacterID: "char-2"},
+		{ID: "sess-3", UserID: "user-3", CharacterID: "char-3"},
+	}
+
+	err := clog.Run(ctx, "server-tick", func(ctx context.Context) error {
+		_ = clog.LoopRollup(ctx, "sessionService.processSession", sessions, func(iterCtx context.Context, _ int, s Session) error {
+			clog.WithGroupFields(iterCtx, "session", clog.Fields{
+				"sessionId":   s.ID,
+				"userId":      s.UserID,
+				"characterId": s.CharacterID,
+			})
+			clog.WithGroupFields(iterCtx, "db.getUser", clog.Fields{
+				"collection": "users",
+				"userId":     s.UserID,
+			})
+			if s.ID == "sess-2" {
+				return errors.New("bungie API timeout")
+			}
+			return nil
+		})
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("clog.Run() error = %v, want nil", err)
+	}
+	event := decodeEvent(t, &output)
 	if event["message"] != "server-tick-success" {
 		t.Errorf("event message = %v, want server-tick-success", event["message"])
 	}
-	job, ok := event["jobMetadata"].(map[string]any)
-	if !ok || job["sessionsProcessed"] != float64(5) {
-		t.Errorf("event job metadata = %v, want sessionsProcessed 5", event["jobMetadata"])
+	// Successful iteration db.getUser should NOT leak onto the parent root
+	if _, leaked := event["db"]; leaked {
+		t.Errorf("expected iteration db group not to leak onto parent root, got %v", event["db"])
 	}
-	if _, ok := event["diagnosticLogs"]; ok {
-		t.Errorf("canonical event contains wrapper diagnostic logs: %v", event["diagnosticLogs"])
+
+	sessionSvc, ok := event["sessionService"].(map[string]any)
+	if !ok {
+		t.Fatalf("sessionService group = %v, want object", event["sessionService"])
+	}
+	rollup, ok := sessionSvc["processSession"].(map[string]any)
+	if !ok {
+		t.Fatalf("sessionService.processSession = %v, want object", sessionSvc["processSession"])
+	}
+	if rollup["total"] != float64(3) || rollup["succeeded"] != float64(2) || rollup["failed"] != float64(1) {
+		t.Errorf("rollup counts = %v, want total=3, succeeded=2, failed=1", rollup)
+	}
+	failures, ok := rollup["failures"].([]any)
+	if !ok || len(failures) != 1 {
+		t.Fatalf("rollup failures = %v, want 1 failed snapshot", rollup["failures"])
+	}
+	failedSnap, ok := failures[0].(map[string]any)
+	if !ok {
+		t.Fatalf("failed snapshot = %v, want object", failures[0])
+	}
+	sessGroup, ok := failedSnap["session"].(map[string]any)
+	if !ok || sessGroup["sessionId"] != "sess-2" {
+		t.Errorf("failed snapshot session = %v, want sessionId sess-2", failedSnap["session"])
+	}
+	dbGroup, ok := failedSnap["db"].(map[string]any)
+	if !ok {
+		t.Fatalf("failed snapshot db = %v, want nested db group", failedSnap["db"])
+	}
+	getUser, ok := dbGroup["getUser"].(map[string]any)
+	if !ok || getUser["userId"] != "user-2" {
+		t.Errorf("failed snapshot db.getUser = %v, want userId user-2", dbGroup["getUser"])
 	}
 }
 
-func TestJobMetadataRetainsOnlyLatestIssue(t *testing.T) {
-	var output bytes.Buffer
-	ctx := testLoggingContext(&output)
-
-	code := runJob(ctx, "server-tick", func(ctx context.Context) error {
-		ctx, state := withJobMetadataState(ctx)
-		for i := range 250 {
-			recordJobIssue(ctx, "test", "issue", clog.Fields{"index": i})
-		}
-		state.flush(ctx)
-		return nil
-	})
-
-	if code != 0 {
-		t.Fatalf("runJob() exit code = %d, want 0", code)
-	}
-	event := decodeEvent(t, &output)
-	job, ok := event["jobMetadata"].(map[string]any)
-	if !ok || job["issueCount"] != float64(250) {
-		t.Fatalf("job metadata = %v, want all issue occurrences counted", event["jobMetadata"])
-	}
-	issue, ok := job["lastIssue"].(map[string]any)
-	if !ok || issue["index"] != float64(249) {
-		t.Errorf("last issue = %v, want only the latest issue details", job["lastIssue"])
-	}
-}
-
-func TestConverterManifestWarningsAreAggregatedInCanonicalMetadata(t *testing.T) {
-	var output bytes.Buffer
-	ctx := testLoggingContext(&output)
-
-	code := runJob(ctx, "server-tick", func(ctx context.Context) error {
-		ctx, state := withJobMetadataState(ctx)
-		generateClassStats(ctx, map[string]StatDefinition{}, map[string]int32{"missing": 10})
-		generateClassStats(ctx, map[string]StatDefinition{}, map[string]int32{"also_missing": 20})
-		state.flush(ctx)
-		return nil
-	})
-
-	if code != 0 {
-		t.Fatalf("runJob() exit code = %d, want 0", code)
-	}
-	event := decodeEvent(t, &output)
-	job, ok := event["jobMetadata"].(map[string]any)
-	if !ok || job["manifestWarningCount"] != float64(2) {
-		t.Fatalf("manifest warning metadata = %v, want count 2", event["jobMetadata"])
-	}
-	warning, ok := job["lastManifestWarning"].(map[string]any)
-	if !ok || warning["type"] != "missing_stat_definition" || warning["statKey"] != "also_missing" {
-		t.Errorf("last manifest warning = %v, want latest warning only", job["lastManifestWarning"])
-	}
-}
-
-func TestRunJobEmitsCanonicalFailureBeforeRepanicking(t *testing.T) {
+func TestRunEmitsCanonicalFailureBeforeRepanicking(t *testing.T) {
 	var output bytes.Buffer
 	ctx := testLoggingContext(&output)
 	var recovered any
 	func() {
 		defer func() { recovered = recover() }()
-		runJob(ctx, "server-tick", func(context.Context) error {
+		_ = clog.Run(ctx, "server-tick", func(context.Context) error {
 			panic("test panic")
 		})
 	}()
@@ -300,8 +373,8 @@ func TestMetricDefinitionsUseCanonicalEventMetadata(t *testing.T) {
 			if !strings.Contains(text, `jsonPayload.job="server-tick"`) || strings.Contains(text, `jsonPayload.message="server_tick_completed"`) {
 				t.Errorf("metric filter does not select canonical job events: %s", text)
 			}
-			if !strings.Contains(text, "EXTRACT(jsonPayload.jobMetadata."+field+")") {
-				t.Errorf("metric extractor does not read jobMetadata.%s: %s", field, text)
+			if !strings.Contains(text, "EXTRACT(jsonPayload."+field+")") {
+				t.Errorf("metric extractor does not read root jsonPayload.%s: %s", field, text)
 			}
 		})
 	}
@@ -316,8 +389,8 @@ func TestMetricDefinitionsUseCanonicalEventMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read manifest warning metric definition: %v", err)
 	}
-	if !strings.Contains(string(manifestWarnings), `jsonPayload.job="server-tick"`) || !strings.Contains(string(manifestWarnings), "EXTRACT(jsonPayload.jobMetadata.manifestWarningCount)") {
-		t.Errorf("manifest warning metric should extract the canonical warning total: %s", manifestWarnings)
+	if !strings.Contains(string(manifestWarnings), `jsonPayload.job="server-tick"`) || !strings.Contains(string(manifestWarnings), `severity="WARNING"`) {
+		t.Errorf("manifest warning metric should filter canonical WARNING events: %s", manifestWarnings)
 	}
 }
 
@@ -338,11 +411,11 @@ func TestSetupLoggingSelectsExpectedHandlerAndPreservesCanonicalEvents(t *testin
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var code int
+			var runErr error
 			output := captureConfiguredLogs(t, tt.cloudRun, tt.cloudRunJob, func() {
 				ctx := clog.NewContextWithLogger(context.Background(), slog.Default())
-				code = runJob(ctx, "server-tick", func(ctx context.Context) error {
-					clog.WithGroupFields(ctx, "jobMetadata", clog.Fields{"taskIndex": int64(7)})
+				runErr = clog.Run(ctx, "server-tick", func(ctx context.Context) error {
+					clog.WithGroupFields(ctx, "request", clog.Fields{"taskIndex": int64(7)})
 					if tt.failure {
 						return errors.New("test failure")
 					}
@@ -350,12 +423,12 @@ func TestSetupLoggingSelectsExpectedHandlerAndPreservesCanonicalEvents(t *testin
 				})
 			})
 
-			wantCode, wantMessage, wantSeverity := 0, "server-tick-success", "INFO"
+			wantMessage, wantSeverity := "server-tick-success", "INFO"
 			if tt.failure {
-				wantCode, wantMessage, wantSeverity = 1, "server-tick-failure", "ERROR"
+				wantMessage, wantSeverity = "server-tick-failure", "ERROR"
 			}
-			if code != wantCode {
-				t.Errorf("runJob() exit code = %d, want %d", code, wantCode)
+			if (runErr != nil) != tt.failure {
+				t.Errorf("clog.Run() error = %v, want failure = %t", runErr, tt.failure)
 			}
 			var event map[string]any
 			if err := json.Unmarshal([]byte(output), &event); err != nil {
@@ -364,13 +437,9 @@ func TestSetupLoggingSelectsExpectedHandlerAndPreservesCanonicalEvents(t *testin
 			if event["message"] != wantMessage || event["severity"] != wantSeverity || event["job"] != "server-tick" {
 				t.Errorf("canonical event = %v, want message %q, severity %q, and job server-tick", event, wantMessage, wantSeverity)
 			}
-			labels, ok := event["logging.googleapis.com/labels"].(map[string]any)
-			if !ok || labels["logger"] != "onetrick-server-tick" {
-				t.Errorf("event labels = %v, want logger onetrick-server-tick", event["logging.googleapis.com/labels"])
-			}
-			job, ok := event["jobMetadata"].(map[string]any)
-			if !ok || job["taskIndex"] != float64(7) {
-				t.Errorf("event job metadata = %v, want taskIndex 7", event["jobMetadata"])
+			req, ok := event["request"].(map[string]any)
+			if !ok || req["taskIndex"] != float64(7) {
+				t.Errorf("event request metadata = %v, want taskIndex 7", event["request"])
 			}
 			if tt.failure {
 				if _, ok := event["error"].(map[string]any); !ok {

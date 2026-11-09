@@ -31,14 +31,14 @@ func newGCPHandlerWithWriter(w io.Writer, level slog.Level) slog.Handler {
 	return clog.NewJSONHandler(w, &slog.HandlerOptions{
 		Level:       level,
 		ReplaceAttr: gcpReplaceAttr,
-	}).WithAttrs(loggingLabels())
+	})
 }
 
 func newPrettyHandler(w io.Writer, level slog.Level) slog.Handler {
 	return clog.NewPrettyJSONHandler(w, &slog.HandlerOptions{
 		Level:       level,
 		ReplaceAttr: gcpReplaceAttr,
-	}).WithAttrs(loggingLabels())
+	}).WithNoColor(true)
 }
 
 func gcpReplaceAttr(groups []string, a slog.Attr) slog.Attr {
@@ -47,12 +47,4 @@ func gcpReplaceAttr(groups []string, a slog.Attr) slog.Attr {
 		return a
 	}
 	return clog.GCPReplaceAttr(groups, a)
-}
-
-func loggingLabels() []slog.Attr {
-	return []slog.Attr{
-		slog.Any("logging.googleapis.com/labels", map[string]string{
-			"logger": "onetrick-server-tick",
-		}),
-	}
 }
