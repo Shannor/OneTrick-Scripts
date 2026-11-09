@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"reflect"
@@ -11,8 +12,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/firestore"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
+	clog "github.com/Shannor/canonical-logger"
 )
 
 type Config struct {
@@ -52,48 +52,88 @@ const (
 )
 
 func main() {
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	setupLogging()
+	os.Exit(runJob(context.Background(), "migration", runMigration))
+}
+
+func runJob(ctx context.Context, event string, execute func(context.Context) error) int {
+	if err := clog.Run(ctx, event, execute); err != nil {
+		return 1
+	}
+	return 0
+}
+
+func runMigration(ctx context.Context) error {
+	startTime := time.Now()
+	clog.WithGroupFields(ctx, "jobMetadata", clog.Fields{
+		"taskIndex":   os.Getenv("CLOUD_RUN_TASK_INDEX"),
+		"taskAttempt": os.Getenv("CLOUD_RUN_TASK_ATTEMPT"),
+	})
+	defer func() {
+		clog.WithGroupFields(ctx, "jobMetadata", clog.Fields{
+			"durationMs": time.Since(startTime).Milliseconds(),
+		})
+	}()
+
 	config, err := configFromEnv()
 	if err != nil {
-		log.Fatal().Err(err)
+		slog.Error("failed to get config", "error", err)
+		return fmt.Errorf("failed to get config: %w", err)
 	}
-	l := log.With().Int64("taskNum", config.taskNum).Logger()
-	ctx := context.Background()
+	clog.WithGroupFields(ctx, "jobMetadata", clog.Fields{
+		"taskIndex":   config.taskNum,
+		"taskAttempt": config.attemptNum,
+	})
+	l := slog.With("taskNum", config.taskNum)
 
 	db, err := firestore.NewClient(ctx, projectID)
 	if err != nil {
-		l.Fatal().Err(err).Msgf("Failed to create client: %v", err)
+		l.Error("Failed to create client", "error", err)
+		return fmt.Errorf("failed to create Firestore client: %w", err)
 	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			l.Error("failed to close database client", "error", err)
+		}
+	}()
 
 	snapshot, err := db.Collection(ConfigurationCollection).Doc(DestinyDocument).Get(ctx)
 	if err != nil {
-		l.Fatal().Err(err).Msg("failed to get db information")
+		l.Error("failed to get db information", "error", err)
+		return fmt.Errorf("failed to get db information: %w", err)
 	}
 
 	var data Configuration
 	err = snapshot.DataTo(&data)
 	if err != nil {
-		l.Fatal().Err(err).Msg("failed to read into configuration")
+		l.Error("failed to read into configuration", "error", err)
+		return fmt.Errorf("failed to read into configuration: %w", err)
 	}
 	currentVersion, ok := GetVersionByIndex(data, config.taskNum)
 	if !ok {
-		l.Fatal().Msg("unknown index for version")
+		return fmt.Errorf("unknown index for version: %d", config.taskNum)
 	}
 	table, ok := GetConfigKeyByIndex(config.taskNum)
 	if !ok {
-		log.Fatal().Msg("unknown task index")
+		return fmt.Errorf("unknown task index: %d", config.taskNum)
 	}
-	l = l.With().Str("table", table).Str("lastVersion", currentVersion).Logger()
+	clog.WithGroupFields(ctx, "migration", clog.Fields{
+		"table":       table,
+		"fromVersion": currentVersion,
+	})
+	l = l.With("table", table, "lastVersion", currentVersion)
 
 	manifestResponse, err := requestManifestInformation(ctx)
 	if err != nil {
-		l.Fatal().Err(err).Msg("failed to get manifest from bungie")
+		l.Error("failed to get manifest from bungie", "error", err)
+		return fmt.Errorf("failed to get manifest from Bungie: %w", err)
 	}
 
 	version := manifestResponse.Response.Version
+	clog.WithGroupFields(ctx, "migration", clog.Fields{"toVersion": version})
 	if version == currentVersion {
-		l.Info().Msg("data is up to date")
-		return
+		l.Info("data is up to date")
+		return nil
 	}
 
 	path := manifestResponse.Response.JsonWorldContentPaths.EN
@@ -101,7 +141,7 @@ func main() {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
 	if err != nil {
-		l.Fatal().Err(err).Msg("failed to create request")
+		return fmt.Errorf("failed to create manifest download request: %w", err)
 	}
 
 	// Add headers that might be necessary for the request
@@ -112,36 +152,37 @@ func main() {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		l.Fatal().Err(err).Msg("failed to download file:")
+		return fmt.Errorf("failed to download manifest file: %w", err)
 	}
 	defer resp.Body.Close()
 
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
-		l.Fatal().Msgf("bad response status: %s (code: %d)", resp.Status, resp.StatusCode)
+		return fmt.Errorf("bad manifest response status: %s (code: %d)", resp.Status, resp.StatusCode)
 	}
 
-	l.Info().
-		Str("url", manifestURL).
-		Msg("downloaded file from source")
+	l.Info("downloaded file from source", "url", manifestURL)
 	var manifest Manifest
 	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
-		l.Fatal().Err(err).Msg("failed to decode manifest data")
+		return fmt.Errorf("failed to decode manifest data: %w", err)
 	}
 
-	l.Debug().Msg("Decoded JSON successfully")
+	l.Debug("Decoded JSON successfully")
 
 	err = performMigration(ctx, db, manifest, config.taskNum)
 	if err != nil {
-		l.Fatal().Err(err).Msg("failed to perform migration")
+		l.Error("failed to perform migration", "error", err)
+		return fmt.Errorf("failed to perform migration: %w", err)
 	}
-	l.Info().Msg("migration completed")
+	l.Info("migration completed")
 	err = updateManifestVersion(ctx, db, table, version)
 	if err != nil {
-		l.Fatal().Err(err).Msg("failed to update version")
+		l.Error("failed to update version", "error", err)
+		return fmt.Errorf("failed to update version: %w", err)
 	}
-	l.Info().Msg("updated version")
-	l.Info().Msg("work done")
+	l.Info("updated version")
+	l.Info("work done")
+	return nil
 }
 
 func requestManifestInformation(ctx context.Context) (*ManifestResponse, error) {
@@ -165,13 +206,8 @@ func requestManifestInformation(ctx context.Context) (*ManifestResponse, error) 
 
 	// Check for success
 	if resp.StatusCode != http.StatusOK {
-		log.
-			Error().
-			Any("value", resp).
-			Str("status", resp.Status).
-			Int("statusCode", resp.StatusCode).
-			Msg("issue with reaching destiny api")
-		return nil, fmt.Errorf("failed to retrieve manifest")
+		slog.Error("issue with reaching destiny api", "status", resp.Status, "statusCode", resp.StatusCode)
+		return nil, fmt.Errorf("failed to retrieve manifest: HTTP %s", resp.Status)
 	}
 
 	var manifestResponse ManifestResponse
@@ -179,10 +215,7 @@ func requestManifestInformation(ctx context.Context) (*ManifestResponse, error) 
 		return nil, fmt.Errorf("failed to decode manifest: %w", err)
 	}
 
-	log.
-		Info().
-		Str("version", manifestResponse.Response.Version).
-		Msg("Successfully downloaded manifest")
+	slog.Info("Successfully downloaded manifest", "version", manifestResponse.Response.Version)
 
 	return &manifestResponse, nil
 }
@@ -226,8 +259,8 @@ func migrateCollection(
 	ctx context.Context,
 	db *firestore.Client,
 	collectionName string,
-	itemsToMigrate interface{},
-	getDocID func(item interface{}) string,
+	itemsToMigrate any,
+	getDocID func(item any) string,
 ) error {
 	loopStartTime := time.Now()
 
@@ -248,7 +281,7 @@ func migrateCollection(
 	// For maps, iterate over the keys
 	// For slices, iterate over the indices
 	for i := 0; i < val.Len(); i++ {
-		var item interface{}
+		var item any
 
 		if val.Kind() == reflect.Map {
 			if i >= len(keys) {
@@ -265,14 +298,18 @@ func migrateCollection(
 		// Save to Firestore
 		_, err := db.Collection(collectionName).Doc(docID).Set(ctx, item)
 		if err != nil {
-			log.Error().Str("docID", docID).Err(err).Msg("failed to save definition")
-			return err
+			slog.Error("failed to save definition", "docId", docID, "error", err)
+			return fmt.Errorf("failed to save definition %s: %w", docID, err)
 		}
 
 		count++
 	}
 
-	log.Info().Str("collection", collectionName).Int("count", count).Dur("duration", time.Since(loopStartTime)).Msg("finished migrating collection")
+	slog.Info("finished migrating collection",
+		"collection", collectionName,
+		"count", count,
+		"durationMs", time.Since(loopStartTime).Milliseconds(),
+	)
 	return nil
 }
 
@@ -285,7 +322,7 @@ func performMigration(ctx context.Context, db *firestore.Client, manifest Manife
 			db,
 			string(InventoryBucketCollection),
 			manifest.InventoryBucketDefinition,
-			func(item interface{}) string {
+			func(item any) string {
 				definition := item.(InventoryBucketDefinition)
 				return strconv.FormatInt(definition.Hash, 10)
 			},
@@ -297,7 +334,7 @@ func performMigration(ctx context.Context, db *firestore.Client, manifest Manife
 			db,
 			string(ClassCollection),
 			manifest.ClassDefinition,
-			func(item interface{}) string {
+			func(item any) string {
 				definition := item.(ClassDefinition)
 				return strconv.FormatInt(definition.Hash, 10)
 			},
@@ -309,7 +346,7 @@ func performMigration(ctx context.Context, db *firestore.Client, manifest Manife
 			db,
 			string(PlaceCollection),
 			manifest.PlaceDefinition,
-			func(item interface{}) string {
+			func(item any) string {
 				definition := item.(PlaceDefinition)
 				return strconv.FormatInt(definition.Hash, 10)
 			},
@@ -321,7 +358,7 @@ func performMigration(ctx context.Context, db *firestore.Client, manifest Manife
 			db,
 			string(DamageCollection),
 			manifest.DamageTypeDefinition,
-			func(item interface{}) string {
+			func(item any) string {
 				definition := item.(DamageType)
 				return strconv.FormatInt(definition.Hash, 10)
 			},
@@ -333,7 +370,7 @@ func performMigration(ctx context.Context, db *firestore.Client, manifest Manife
 			db,
 			string(ActivityModeCollection),
 			manifest.ActivityModeDefinition,
-			func(item interface{}) string {
+			func(item any) string {
 				definition := item.(ActivityModeDefinition)
 				return strconv.FormatInt(definition.Hash, 10)
 			},
@@ -344,7 +381,7 @@ func performMigration(ctx context.Context, db *firestore.Client, manifest Manife
 			db,
 			string(ActivityCollection),
 			manifest.ActivityDefinition,
-			func(item interface{}) string {
+			func(item any) string {
 				definition := item.(ActivityDefinition)
 				return strconv.FormatInt(int64(definition.Hash), 10)
 			},
@@ -356,7 +393,7 @@ func performMigration(ctx context.Context, db *firestore.Client, manifest Manife
 			db,
 			string(ItemCategoryCollection),
 			manifest.ItemCategoryDefinition,
-			func(item interface{}) string {
+			func(item any) string {
 				definition := item.(ItemCategory)
 				return strconv.FormatInt(definition.Hash, 10)
 			},
@@ -368,7 +405,7 @@ func performMigration(ctx context.Context, db *firestore.Client, manifest Manife
 			db,
 			string(ItemDefinitionCollection),
 			manifest.InventoryItemDefinition,
-			func(item interface{}) string {
+			func(item any) string {
 				definition := item.(ItemDefinition)
 				return strconv.FormatInt(definition.Hash, 10)
 			},
@@ -380,7 +417,7 @@ func performMigration(ctx context.Context, db *firestore.Client, manifest Manife
 			db,
 			string(StatDefinitionCollection),
 			manifest.StatDefinition,
-			func(item interface{}) string {
+			func(item any) string {
 				definition := item.(StatDefinition)
 				return strconv.FormatInt(definition.Hash, 10)
 			},
@@ -392,7 +429,7 @@ func performMigration(ctx context.Context, db *firestore.Client, manifest Manife
 			db,
 			string(RaceCollection),
 			manifest.RaceDefinition,
-			func(item interface{}) string {
+			func(item any) string {
 				definition := item.(RaceDefinition)
 				return strconv.FormatInt(int64(definition.Hash), 10)
 			},
@@ -404,7 +441,7 @@ func performMigration(ctx context.Context, db *firestore.Client, manifest Manife
 			db,
 			string(SandboxPerkCollection),
 			manifest.SandboxPerkDefinition,
-			func(item interface{}) string {
+			func(item any) string {
 				definition := item.(PerkDefinition)
 				return strconv.FormatInt(definition.Hash, 10)
 			},
@@ -416,7 +453,7 @@ func performMigration(ctx context.Context, db *firestore.Client, manifest Manife
 			db,
 			string(RecordDefinitionCollection),
 			manifest.RecordDefinition,
-			func(item interface{}) string {
+			func(item any) string {
 				definition := item.(RecordDefinition)
 				return strconv.FormatInt(int64(definition.Hash), 10)
 			},
@@ -440,7 +477,7 @@ func performMigration(ctx context.Context, db *firestore.Client, manifest Manife
 
 		}
 	default:
-		log.Info().Int64("index", index).Msg("Unsupported index")
+		slog.Info("Unsupported index", "index", index)
 		return nil
 	}
 }
@@ -484,13 +521,13 @@ func updateManifestVersion(ctx context.Context, db *firestore.Client, table, ver
 		Collection(ConfigurationCollection).
 		Doc(DestinyDocument).
 		Set(
-			ctx, map[string]interface{}{
+			ctx, map[string]any{
 				table: version,
 			}, firestore.MergeAll,
 		)
 	if err != nil {
-		log.Error().Err(err).Msg("failed to update config")
-		return err
+		slog.Error("failed to update config", "error", err)
+		return fmt.Errorf("failed to update config: %w", err)
 	}
 	return nil
 }

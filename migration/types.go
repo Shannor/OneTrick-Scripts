@@ -455,22 +455,22 @@ type RecordDefinition struct {
 		Description   string `json:"description" firestore:"description"`
 	} `json:"expirationInfo" firestore:"expirationInfo"`
 	IntervalInfo struct {
-		IntervalObjectives                   []interface{} `json:"intervalObjectives" firestore:"intervalObjectives"`
-		IntervalRewards                      []interface{} `json:"intervalRewards" firestore:"intervalRewards"`
-		OriginalObjectiveArrayInsertionIndex int           `json:"originalObjectiveArrayInsertionIndex" firestore:"originalObjectiveArrayInsertionIndex"`
-		IsIntervalVersionedFromNormalRecord  bool          `json:"isIntervalVersionedFromNormalRecord" firestore:"isIntervalVersionedFromNormalRecord"`
+		IntervalObjectives                   []any `json:"intervalObjectives" firestore:"intervalObjectives"`
+		IntervalRewards                      []any `json:"intervalRewards" firestore:"intervalRewards"`
+		OriginalObjectiveArrayInsertionIndex int   `json:"originalObjectiveArrayInsertionIndex" firestore:"originalObjectiveArrayInsertionIndex"`
+		IsIntervalVersionedFromNormalRecord  bool  `json:"isIntervalVersionedFromNormalRecord" firestore:"isIntervalVersionedFromNormalRecord"`
 	} `json:"intervalInfo" firestore:"intervalInfo"`
-	RewardItems                       []interface{} `json:"rewardItems" firestore:"rewardItems"`
-	AnyRewardHasConditionalVisibility bool          `json:"anyRewardHasConditionalVisibility" firestore:"anyRewardHasConditionalVisibility"`
-	RecordTypeName                    string        `json:"recordTypeName" firestore:"recordTypeName"`
-	PresentationNodeType              int           `json:"presentationNodeType" firestore:"presentationNodeType"`
-	TraitIds                          []interface{} `json:"traitIds" firestore:"traitIds"`
-	TraitHashes                       []interface{} `json:"traitHashes" firestore:"traitHashes"`
-	ParentNodeHashes                  []interface{} `json:"parentNodeHashes" firestore:"parentNodeHashes"`
-	Hash                              int           `json:"hash" firestore:"hash"`
-	Index                             int           `json:"index" firestore:"index"`
-	Redacted                          bool          `json:"redacted" firestore:"redacted"`
-	Blacklisted                       bool          `json:"blacklisted" firestore:"blacklisted"`
+	RewardItems                       []any  `json:"rewardItems" firestore:"rewardItems"`
+	AnyRewardHasConditionalVisibility bool   `json:"anyRewardHasConditionalVisibility" firestore:"anyRewardHasConditionalVisibility"`
+	RecordTypeName                    string `json:"recordTypeName" firestore:"recordTypeName"`
+	PresentationNodeType              int    `json:"presentationNodeType" firestore:"presentationNodeType"`
+	TraitIds                          []any  `json:"traitIds" firestore:"traitIds"`
+	TraitHashes                       []any  `json:"traitHashes" firestore:"traitHashes"`
+	ParentNodeHashes                  []any  `json:"parentNodeHashes" firestore:"parentNodeHashes"`
+	Hash                              int    `json:"hash" firestore:"hash"`
+	Index                             int    `json:"index" firestore:"index"`
+	Redacted                          bool   `json:"redacted" firestore:"redacted"`
+	Blacklisted                       bool   `json:"blacklisted" firestore:"blacklisted"`
 }
 
 type ModeDisplayProperties struct {

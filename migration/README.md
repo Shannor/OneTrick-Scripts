@@ -1,5 +1,8 @@
 # Destiny Migration Job
 
+## Logging
+
+This job requires Go 1.26.4 or newer. Each execution emits a canonical `migration-success` or `migration-failure` JSON event with Cloud Run task details under `jobMetadata` and the migration table and version metadata when available. When `CLOUD_RUN_JOB` is set, logs use compact Cloud Logging JSON; local runs use pretty-printed JSON with the same fields, including Cloud Logging `message` and `severity`.
 
 Deploying it 
 ```shell

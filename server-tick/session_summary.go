@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/firestore"
+	clog "github.com/Shannor/canonical-logger"
 )
 
 // GetAggregatesByIDs fetches aggregate documents corresponding to the provided aggregate IDs in batches.
@@ -17,13 +18,11 @@ func GetAggregatesByIDs(ctx context.Context, db *firestore.Client, aggregateIDs 
 	if len(aggregateIDs) == 0 {
 		return nil, nil
 	}
+	start := time.Now()
 	const maxBatch = 30
 	var out []Aggregate
 	for i := 0; i < len(aggregateIDs); i += maxBatch {
-		end := i + maxBatch
-		if end > len(aggregateIDs) {
-			end = len(aggregateIDs)
-		}
+		end := min(i+maxBatch, len(aggregateIDs))
 		batch := aggregateIDs[i:end]
 		refs := make([]*firestore.DocumentRef, 0, len(batch))
 		for _, id := range batch {
@@ -31,6 +30,11 @@ func GetAggregatesByIDs(ctx context.Context, db *firestore.Client, aggregateIDs 
 		}
 		docs, err := db.GetAll(ctx, refs)
 		if err != nil {
+			clog.WithGroupFields(ctx, "db.getAggregatesByIds", clog.Fields{
+				"collection":     aggregateCollection,
+				"requestedCount": len(aggregateIDs),
+				"durationMs":     time.Since(start).Milliseconds(),
+			})
 			return nil, err
 		}
 		for _, doc := range docs {
@@ -44,11 +48,18 @@ func GetAggregatesByIDs(ctx context.Context, db *firestore.Client, aggregateIDs 
 			out = append(out, agg)
 		}
 	}
+	clog.WithGroupFields(ctx, "db.getAggregatesByIds", clog.Fields{
+		"collection":     aggregateCollection,
+		"requestedCount": len(aggregateIDs),
+		"rowsReturned":   len(out),
+		"durationMs":     time.Since(start).Milliseconds(),
+	})
 	return out, nil
 }
 
 // ComputeSessionSummary calculates performance statistics and loadout weapon summaries for a session.
 func ComputeSessionSummary(ctx context.Context, db *firestore.Client, session Session) (*SessionSummary, error) {
+	start := time.Now()
 	if len(session.AggregateIDs) == 0 {
 		return &SessionSummary{
 			TotalMatches: 0,
@@ -261,6 +272,14 @@ func ComputeSessionSummary(ctx context.Context, db *firestore.Client, session Se
 		modesOrder = make([]string, 0)
 	}
 
+	clog.WithGroupFields(ctx, "sessionService.computeSummary", clog.Fields{
+		"sessionId":    session.ID,
+		"totalMatches": totalMatches,
+		"wins":         wins,
+		"losses":       losses,
+		"durationMs":   time.Since(start).Milliseconds(),
+	})
+
 	return &SessionSummary{
 		TotalMatches: totalMatches,
 		Wins:         wins,
@@ -278,6 +297,7 @@ func ComputeSessionSummary(ctx context.Context, db *firestore.Client, session Se
 
 // UpdateSessionSummary updates the sessionSummary field and updatedAt timestamp on a session document in Firestore.
 func UpdateSessionSummary(ctx context.Context, db *firestore.Client, sessionID string, summary *SessionSummary) error {
+	start := time.Now()
 	_, err := db.Collection(SessionCollection).Doc(sessionID).Update(ctx, []firestore.Update{
 		{
 			Path:  "sessionSummary",
@@ -287,6 +307,11 @@ func UpdateSessionSummary(ctx context.Context, db *firestore.Client, sessionID s
 			Path:  "updatedAt",
 			Value: time.Now(),
 		},
+	})
+	clog.WithGroupFields(ctx, "db.updateSessionSummary", clog.Fields{
+		"collection": SessionCollection,
+		"sessionId":  sessionID,
+		"durationMs": time.Since(start).Milliseconds(),
 	})
 	return err
 }
