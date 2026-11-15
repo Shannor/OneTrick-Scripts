@@ -10,8 +10,8 @@ cloud.google.com/go/firestore v1.18.0 h1:cuydCaLS7Vl2SatAeivXyhbhDEIR8BDmtn4egDh
 cloud.google.com/go/firestore v1.18.0/go.mod h1:5ye0v48PhseZBdcl0qbl3uttu7FIEwEYVaWm0UIEOEU=
 cloud.google.com/go/longrunning v0.6.2 h1:xjDfh1pQcWPEvnfjZmwjKQEcHnpz6lHjfy7Fo0MK+hc=
 cloud.google.com/go/longrunning v0.6.2/go.mod h1:k/vIs83RN4bE3YCswdXC5PFfWVILjm3hpEUlSko4PiI=
-github.com/Shannor/canonical-logger v0.5.0 h1:LHihDM1lYVzG4rYHM4sHJQ43WBUlRYiWVcWuqd5TsP8=
-github.com/Shannor/canonical-logger v0.5.0/go.mod h1:C4AeWeEtgWWRB4u7bbcdNZoGr5bdFtYibcm3sZQjSkU=
+github.com/Shannor/canonical-logger v0.6.0 h1:gWSbcp446SSRiAwO6jS6uTw4Fmx7n3jzSZxQiOzwYlA=
+github.com/Shannor/canonical-logger v0.6.0/go.mod h1:C4AeWeEtgWWRB4u7bbcdNZoGr5bdFtYibcm3sZQjSkU=
 github.com/felixge/httpsnoop v1.0.4 h1:NFTV2Zj1bL4mc9sqWACXbQFVBBg2W3GPvqp8/ESS2Wg=
 github.com/felixge/httpsnoop v1.0.4/go.mod h1:m8KPJKqk1gH5J9DgRY2ASl2lWCfGKXixSwevea8zH2U=
 github.com/go-logr/logr v1.2.2/go.mod h1:jdQByPbusPIv2/zmleS9BjJVeZ6kBagPoEUsqbVz/1A=

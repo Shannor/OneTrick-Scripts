@@ -14,12 +14,12 @@ import (
 	clog "github.com/Shannor/canonical-logger"
 )
 
-func TestRunJobEmitsCanonicalSuccessWithMigrationMetadata(t *testing.T) {
+func TestRunEmitsCanonicalSuccessWithMigrationMetadata(t *testing.T) {
 	var output bytes.Buffer
 	ctx := testLoggingContext(&output)
 
-	code := runJob(ctx, "migration", func(ctx context.Context) error {
-		clog.WithGroupFields(ctx, "jobMetadata", clog.Fields{
+	err := clog.Run(ctx, "migration", func(ctx context.Context) error {
+		clog.WithGroupFields(ctx, "request", clog.Fields{
 			"taskIndex":   int64(2),
 			"taskAttempt": "1",
 		})
@@ -28,11 +28,15 @@ func TestRunJobEmitsCanonicalSuccessWithMigrationMetadata(t *testing.T) {
 			"fromVersion": "old",
 			"toVersion":   "new",
 		})
+		clog.WithFields(ctx, clog.Fields{
+			"itemsMigrated": 42,
+			"upToDate":      false,
+		})
 		return nil
 	})
 
-	if code != 0 {
-		t.Fatalf("runJob() exit code = %d, want 0", code)
+	if err != nil {
+		t.Fatalf("clog.Run() error = %v, want nil", err)
 	}
 	event := decodeEvent(t, &output)
 	if event["message"] != "migration-success" {
@@ -44,27 +48,30 @@ func TestRunJobEmitsCanonicalSuccessWithMigrationMetadata(t *testing.T) {
 	if event["severity"] != "INFO" {
 		t.Errorf("event severity = %v, want INFO", event["severity"])
 	}
-	job, ok := event["jobMetadata"].(map[string]any)
-	if !ok || job["taskIndex"] != float64(2) || job["taskAttempt"] != "1" {
-		t.Errorf("event job metadata = %v, want taskIndex 2 and taskAttempt 1", event["jobMetadata"])
+	req, ok := event["request"].(map[string]any)
+	if !ok || req["taskIndex"] != float64(2) || req["taskAttempt"] != "1" {
+		t.Errorf("event request metadata = %v, want taskIndex 2 and taskAttempt 1", event["request"])
 	}
 	migration, ok := event["migration"].(map[string]any)
 	if !ok || migration["table"] != "activityDefinition" || migration["fromVersion"] != "old" || migration["toVersion"] != "new" {
 		t.Errorf("event migration metadata = %v, want table and version fields", event["migration"])
 	}
+	if event["itemsMigrated"] != float64(42) || event["upToDate"] != false {
+		t.Errorf("event root counters = %v, want itemsMigrated 42 and upToDate false", event)
+	}
 }
 
-func TestRunJobEmitsCanonicalFailureAndReturnsNonzero(t *testing.T) {
+func TestRunEmitsCanonicalFailureAndReturnsError(t *testing.T) {
 	var output bytes.Buffer
 	ctx := testLoggingContext(&output)
 
-	code := runJob(ctx, "migration", func(ctx context.Context) error {
-		clog.WithGroupFields(ctx, "jobMetadata", clog.Fields{"taskIndex": int64(3)})
+	err := clog.Run(ctx, "migration", func(ctx context.Context) error {
+		clog.WithGroupFields(ctx, "request", clog.Fields{"taskIndex": int64(3)})
 		return errors.New("test failure")
 	})
 
-	if code != 1 {
-		t.Fatalf("runJob() exit code = %d, want 1", code)
+	if err == nil {
+		t.Fatalf("clog.Run() error = nil, want error")
 	}
 	event := decodeEvent(t, &output)
 	if event["message"] != "migration-failure" {
@@ -78,24 +85,80 @@ func TestRunJobEmitsCanonicalFailureAndReturnsNonzero(t *testing.T) {
 	}
 }
 
-func TestMigrationConfigurationFailureIsCanonicalAndNonzero(t *testing.T) {
+func TestMigrationConfigurationFailureIsCanonical(t *testing.T) {
 	t.Setenv("CLOUD_RUN_TASK_INDEX", "invalid")
 	t.Setenv("CLOUD_RUN_TASK_ATTEMPT", "4")
 	var output bytes.Buffer
 	ctx := testLoggingContext(&output)
 
-	code := runJob(ctx, "migration", runMigration)
+	err := clog.Run(ctx, "migration", runMigration)
 
-	if code != 1 {
-		t.Fatalf("runJob() exit code = %d, want 1", code)
+	if err == nil {
+		t.Fatalf("clog.Run() error = nil, want configuration error")
 	}
 	event := decodeEvent(t, &output)
 	if event["message"] != "migration-failure" || event["severity"] != "ERROR" {
 		t.Errorf("configuration failure event = %v, want migration-failure with ERROR severity", event)
 	}
-	job, ok := event["jobMetadata"].(map[string]any)
-	if !ok || job["taskIndex"] != "invalid" || job["taskAttempt"] != "4" {
-		t.Errorf("event job metadata = %v, want raw task index and attempt", event["jobMetadata"])
+	req, ok := event["request"].(map[string]any)
+	if !ok || req["taskIndex"] != "invalid" || req["taskAttempt"] != "4" {
+		t.Errorf("event request metadata = %v, want raw task index and attempt", event["request"])
+	}
+	if event["errorsTotal"] != float64(1) {
+		t.Errorf("errorsTotal = %v, want 1", event["errorsTotal"])
+	}
+}
+
+func TestLoopRollupWithStopOnErrorRetainsFailedSnapshot(t *testing.T) {
+	var output bytes.Buffer
+	ctx := testLoggingContext(&output)
+
+	items := []string{"doc-1", "doc-2", "doc-3"}
+	err := clog.Run(ctx, "migration", func(ctx context.Context) error {
+		return clog.LoopRollupWithOptions(
+			ctx,
+			"migrationService.migrateItem",
+			items,
+			clog.LoopOptions{StopOnError: true},
+			func(iterCtx context.Context, _ int, docID string) error {
+				clog.WithGroupFields(iterCtx, "definition", clog.Fields{
+					"collection": "d2ActivityDefinitions",
+					"docId":      docID,
+				})
+				if docID == "doc-2" {
+					return errors.New("firestore write failed")
+				}
+				return nil
+			},
+		)
+	})
+
+	if err == nil {
+		t.Fatalf("clog.Run() error = nil, want error")
+	}
+	event := decodeEvent(t, &output)
+	migrationSvc, ok := event["migrationService"].(map[string]any)
+	if !ok {
+		t.Fatalf("migrationService group = %v, want object", event["migrationService"])
+	}
+	rollup, ok := migrationSvc["migrateItem"].(map[string]any)
+	if !ok {
+		t.Fatalf("migrationService.migrateItem = %v, want object", migrationSvc["migrateItem"])
+	}
+	if rollup["total"] != float64(2) || rollup["succeeded"] != float64(1) || rollup["failed"] != float64(1) {
+		t.Errorf("rollup counts = %v, want total=2, succeeded=1, failed=1", rollup)
+	}
+	failures, ok := rollup["failures"].([]any)
+	if !ok || len(failures) != 1 {
+		t.Fatalf("rollup failures = %v, want 1 failed snapshot", rollup["failures"])
+	}
+	failedSnap, ok := failures[0].(map[string]any)
+	if !ok {
+		t.Fatalf("failed snapshot = %v, want object", failures[0])
+	}
+	defGroup, ok := failedSnap["definition"].(map[string]any)
+	if !ok || defGroup["docId"] != "doc-2" {
+		t.Errorf("failed snapshot definition = %v, want docId doc-2", failedSnap["definition"])
 	}
 }
 
@@ -130,11 +193,11 @@ func TestSetupLoggingSelectsExpectedHandlerAndPreservesCanonicalEvents(t *testin
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var code int
+			var runErr error
 			output := captureConfiguredLogs(t, tt.cloudRun, tt.cloudRunJob, func() {
 				ctx := clog.NewContextWithLogger(context.Background(), slog.Default())
-				code = runJob(ctx, "migration", func(ctx context.Context) error {
-					clog.WithGroupFields(ctx, "jobMetadata", clog.Fields{"taskIndex": int64(7)})
+				runErr = clog.Run(ctx, "migration", func(ctx context.Context) error {
+					clog.WithGroupFields(ctx, "request", clog.Fields{"taskIndex": int64(7)})
 					if tt.failure {
 						return errors.New("test failure")
 					}
@@ -142,12 +205,12 @@ func TestSetupLoggingSelectsExpectedHandlerAndPreservesCanonicalEvents(t *testin
 				})
 			})
 
-			wantCode, wantMessage, wantSeverity := 0, "migration-success", "INFO"
+			wantMessage, wantSeverity := "migration-success", "INFO"
 			if tt.failure {
-				wantCode, wantMessage, wantSeverity = 1, "migration-failure", "ERROR"
+				wantMessage, wantSeverity = "migration-failure", "ERROR"
 			}
-			if code != wantCode {
-				t.Errorf("runJob() exit code = %d, want %d", code, wantCode)
+			if (runErr != nil) != tt.failure {
+				t.Errorf("clog.Run() error = %v, want failure=%t", runErr, tt.failure)
 			}
 			var event map[string]any
 			if err := json.Unmarshal([]byte(output), &event); err != nil {
@@ -156,13 +219,9 @@ func TestSetupLoggingSelectsExpectedHandlerAndPreservesCanonicalEvents(t *testin
 			if event["message"] != wantMessage || event["severity"] != wantSeverity || event["job"] != "migration" {
 				t.Errorf("canonical event = %v, want message %q, severity %q, and job migration", event, wantMessage, wantSeverity)
 			}
-			labels, ok := event["logging.googleapis.com/labels"].(map[string]any)
-			if !ok || labels["logger"] != "onetrick-migration" {
-				t.Errorf("event labels = %v, want logger onetrick-migration", event["logging.googleapis.com/labels"])
-			}
-			job, ok := event["jobMetadata"].(map[string]any)
-			if !ok || job["taskIndex"] != float64(7) {
-				t.Errorf("event job metadata = %v, want taskIndex 7", event["jobMetadata"])
+			req, ok := event["request"].(map[string]any)
+			if !ok || req["taskIndex"] != float64(7) {
+				t.Errorf("event request metadata = %v, want taskIndex 7", event["request"])
 			}
 			if tt.failure {
 				if _, ok := event["error"].(map[string]any); !ok {

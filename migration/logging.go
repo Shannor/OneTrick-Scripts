@@ -8,6 +8,9 @@ import (
 	clog "github.com/Shannor/canonical-logger"
 )
 
+// setupLogging configures slog with a GCP Cloud Logging compatible JSON handler.
+// Maps "msg" -> "message", "level" -> "severity" with GCP severity values,
+// and "time" -> "timestamp".
 func setupLogging() {
 	var handler slog.Handler
 	if _, isCloudRun := os.LookupEnv("CLOUD_RUN_JOB"); isCloudRun {
@@ -18,6 +21,8 @@ func setupLogging() {
 	slog.SetDefault(slog.New(handler))
 }
 
+// newGCPHandler creates an slog.Handler configured for GCP Cloud Logging stdout ingestion.
+// Matches the pattern used in the onetrick-service API.
 func newGCPHandler(level slog.Level) slog.Handler {
 	return newGCPHandlerWithWriter(os.Stdout, level)
 }
@@ -26,14 +31,14 @@ func newGCPHandlerWithWriter(w io.Writer, level slog.Level) slog.Handler {
 	return clog.NewJSONHandler(w, &slog.HandlerOptions{
 		Level:       level,
 		ReplaceAttr: gcpReplaceAttr,
-	}).WithAttrs(loggingLabels())
+	})
 }
 
 func newPrettyHandler(w io.Writer, level slog.Level) slog.Handler {
 	return clog.NewPrettyJSONHandler(w, &slog.HandlerOptions{
 		Level:       level,
 		ReplaceAttr: gcpReplaceAttr,
-	}).WithAttrs(loggingLabels())
+	}).WithNoColor(true)
 }
 
 func gcpReplaceAttr(groups []string, a slog.Attr) slog.Attr {
@@ -42,12 +47,4 @@ func gcpReplaceAttr(groups []string, a slog.Attr) slog.Attr {
 		return a
 	}
 	return clog.GCPReplaceAttr(groups, a)
-}
-
-func loggingLabels() []slog.Attr {
-	return []slog.Attr{
-		slog.Any("logging.googleapis.com/labels", map[string]string{
-			"logger": "onetrick-migration",
-		}),
-	}
 }
