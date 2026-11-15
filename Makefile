@@ -22,7 +22,7 @@ SERVER_TICK_SECRETS      := D2_API_KEY=D2_API_KEY:latest
 # Migration specific variables (assuming similar configuration)
 MIGRATION_NAME           := migration
 MIGRATION_SOURCE         := ./migration
-MIGRATION_TASKS          := 1
+MIGRATION_TASKS          := 14
 MIGRATION_TIMEOUT        := 10m
 MIGRATION_MEMORY         := 1Gi
 MIGRATION_CPU            := 1

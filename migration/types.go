@@ -37,8 +37,9 @@ type Manifest struct {
 	CharacterCustomizationOptionDefinition   map[string]any                       `json:"DestinyCharacterCustomizationOptionDefinition"`
 	CollectibleDefinition                    map[string]any                       `json:"DestinyCollectibleDefinition"`
 	DestinationDefinition                    map[string]any                       `json:"DestinyDestinationDefinition"`
-	EntitlementOfferDefinition               map[string]any                       `json:"DestinyEntitlementOfferDefinition"`
-	EquipmentSlotDefinition                  map[string]any                       `json:"DestinyEquipmentSlotDefinition"`
+	EntitlementOfferDefinition               map[string]any                          `json:"DestinyEntitlementOfferDefinition"`
+	EquipableItemSetDefinition               map[string]EquipableItemSetDefinition   `json:"DestinyEquipableItemSetDefinition"`
+	EquipmentSlotDefinition                  map[string]any                          `json:"DestinyEquipmentSlotDefinition"`
 	EventCardDefinition                      map[string]any                       `json:"DestinyEventCardDefinition"`
 	FireteamFinderActivityGraphDefinition    map[string]any                       `json:"DestinyFireteamFinderActivityGraphDefinition"`
 	FireteamFinderActivitySetDefinition      map[string]any                       `json:"DestinyFireteamFinderActivitySetDefinition"`
@@ -243,8 +244,24 @@ type ItemStat struct {
 }
 
 type EquippingBlock struct {
-	UniqueLabelHash       int64 `json:"uniqueLabelHash" firestore:"uniqueLabelHash"`
-	EquipmentSlotTypeHash int64 `json:"equipmentSlotTypeHash" firestore:"equipmentSlotTypeHash"`
+	UniqueLabelHash       int64  `json:"uniqueLabelHash" firestore:"uniqueLabelHash"`
+	EquipmentSlotTypeHash int64  `json:"equipmentSlotTypeHash" firestore:"equipmentSlotTypeHash"`
+	EquipableItemSetHash  *int64 `json:"equipableItemSetHash,omitempty" firestore:"equipableItemSetHash,omitempty"`
+}
+
+type EquipableItemSetDefinition struct {
+	DisplayProperties ItemDisplayProperties   `json:"displayProperties" firestore:"displayProperties"`
+	SetItems          []int64                 `json:"setItems" firestore:"setItems"`
+	SetPerks          []ItemSetPerkDefinition `json:"setPerks" firestore:"setPerks"`
+	Hash              int64                   `json:"hash" firestore:"hash"`
+	Index             int                     `json:"index" firestore:"index"`
+	Redacted          bool                    `json:"redacted" firestore:"redacted"`
+	Blacklisted       bool                    `json:"blacklisted" firestore:"blacklisted"`
+}
+
+type ItemSetPerkDefinition struct {
+	RequiredSetCount int   `json:"requiredSetCount" firestore:"requiredSetCount"`
+	SandboxPerkHash  int64 `json:"sandboxPerkHash" firestore:"sandboxPerkHash"`
 }
 
 type TranslationBlock struct {
@@ -544,6 +561,7 @@ type Configuration struct {
 	SandboxPerkVersion      string `json:"sandboxPerkVersion" firestore:"sandboxPerkVersion"`
 	RecordDefinitionVersion string `json:"recordDefinitionVersion" firestore:"recordDefinitionVersion"`
 	CrucibleMapVersion      string `json:"crucibleMapVersion" firestore:"crucibleMapVersion"`
+	EquipableItemSetVersion string `json:"equipableItemSetVersion" firestore:"equipableItemSetVersion"`
 }
 
 type WeaponBucket = uint32
@@ -607,4 +625,5 @@ const (
 	SandboxPerkCollection      ManifestCollection = "d2SandboxPerks"
 	RecordDefinitionCollection ManifestCollection = "d2RecordDefinitions"
 	CrucibleMapCollection      ManifestCollection = "crucibleMaps"
+	EquipableItemSetCollection ManifestCollection = "d2EquipableItemSets"
 )

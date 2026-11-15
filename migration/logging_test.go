@@ -296,3 +296,67 @@ func decodeEvent(t *testing.T, output *bytes.Buffer) map[string]any {
 	}
 	return event
 }
+
+func TestEquipableItemSetMigrationAndManifestDecoding(t *testing.T) {
+	cfg := Configuration{
+		EquipableItemSetVersion: "v1.2.3",
+	}
+	gotVersion, ok := GetVersionByIndex(cfg, 13)
+	if !ok || gotVersion != "v1.2.3" {
+		t.Fatalf("GetVersionByIndex(cfg, 13) = (%q, %v), want (\"v1.2.3\", true)", gotVersion, ok)
+	}
+	gotKey, ok := GetConfigKeyByIndex(13)
+	if !ok || gotKey != "equipableItemSetVersion" {
+		t.Fatalf("GetConfigKeyByIndex(13) = (%q, %v), want (\"equipableItemSetVersion\", true)", gotKey, ok)
+	}
+
+	rawManifest := `{
+		"DestinyInventoryItemDefinition": {
+			"479136420": {
+				"hash": 479136420,
+				"displayProperties": {"name": "Per Audacia Casque"},
+				"equippingBlock": {
+					"uniqueLabelHash": 0,
+					"equipmentSlotTypeHash": 3448274439,
+					"equipableItemSetHash": 2618364783
+				}
+			}
+		},
+		"DestinyEquipableItemSetDefinition": {
+			"2618364783": {
+				"hash": 2618364783,
+				"displayProperties": {"name": "Per Audacia"},
+				"setItems": [479136420, 43450237],
+				"setPerks": [
+					{"requiredSetCount": 2, "sandboxPerkHash": 3091068916},
+					{"requiredSetCount": 4, "sandboxPerkHash": 3091068917}
+				]
+			}
+		}
+	}`
+	var manifest Manifest
+	if err := json.Unmarshal([]byte(rawManifest), &manifest); err != nil {
+		t.Fatalf("failed to unmarshal manifest JSON: %v", err)
+	}
+
+	itemDef, ok := manifest.InventoryItemDefinition["479136420"]
+	if !ok || itemDef.EquippingBlock.EquipableItemSetHash == nil || *itemDef.EquippingBlock.EquipableItemSetHash != 2618364783 {
+		t.Fatalf("itemDef.EquippingBlock.EquipableItemSetHash = %v, want 2618364783", itemDef.EquippingBlock.EquipableItemSetHash)
+	}
+
+	setDef, ok := manifest.EquipableItemSetDefinition["2618364783"]
+	if !ok || setDef.DisplayProperties.Name != "Per Audacia" || len(setDef.SetPerks) != 2 {
+		t.Fatalf("setDef = %+v, want Per Audacia with 2 setPerks", setDef)
+	}
+
+	var output bytes.Buffer
+	ctx := testLoggingContext(&output)
+	migrated, err := performMigration(ctx, nil, manifest, 13, true)
+	if err != nil {
+		t.Fatalf("performMigration(index=13, dryRun=true) error = %v", err)
+	}
+	if migrated != 1 {
+		t.Errorf("performMigration(index=13, dryRun=true) migrated = %d, want 1", migrated)
+	}
+}
+

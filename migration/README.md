@@ -8,7 +8,7 @@ Deploying it
 ```shell
     gcloud run jobs deploy migration \
         --source . \
-        --tasks 12 \
+        --tasks 14 \
         --task-timeout 30m \
         --memory 2Gi \
         --cpu 1 \
