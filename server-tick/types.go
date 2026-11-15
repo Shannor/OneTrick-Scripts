@@ -46,8 +46,9 @@ type Manifest struct {
 	CharacterCustomizationOptionDefinition   map[string]any                       `json:"DestinyCharacterCustomizationOptionDefinition"`
 	CollectibleDefinition                    map[string]any                       `json:"DestinyCollectibleDefinition"`
 	DestinationDefinition                    map[string]any                       `json:"DestinyDestinationDefinition"`
-	EntitlementOfferDefinition               map[string]any                       `json:"DestinyEntitlementOfferDefinition"`
-	EquipmentSlotDefinition                  map[string]any                       `json:"DestinyEquipmentSlotDefinition"`
+	EntitlementOfferDefinition               map[string]any                          `json:"DestinyEntitlementOfferDefinition"`
+	EquipableItemSetDefinition               map[string]EquipableItemSetDefinition   `json:"DestinyEquipableItemSetDefinition"`
+	EquipmentSlotDefinition                  map[string]any                          `json:"DestinyEquipmentSlotDefinition"`
 	EventCardDefinition                      map[string]any                       `json:"DestinyEventCardDefinition"`
 	FireteamFinderActivityGraphDefinition    map[string]any                       `json:"DestinyFireteamFinderActivityGraphDefinition"`
 	FireteamFinderActivitySetDefinition      map[string]any                       `json:"DestinyFireteamFinderActivitySetDefinition"`
@@ -252,8 +253,24 @@ type ItemStat struct {
 }
 
 type EquippingBlock struct {
-	UniqueLabelHash       int64 `json:"uniqueLabelHash" firestore:"uniqueLabelHash"`
-	EquipmentSlotTypeHash int64 `json:"equipmentSlotTypeHash" firestore:"equipmentSlotTypeHash"`
+	UniqueLabelHash       int64  `json:"uniqueLabelHash" firestore:"uniqueLabelHash"`
+	EquipmentSlotTypeHash int64  `json:"equipmentSlotTypeHash" firestore:"equipmentSlotTypeHash"`
+	EquipableItemSetHash  *int64 `json:"equipableItemSetHash,omitempty" firestore:"equipableItemSetHash,omitempty"`
+}
+
+type EquipableItemSetDefinition struct {
+	DisplayProperties ItemDisplayProperties   `json:"displayProperties" firestore:"displayProperties"`
+	SetItems          []int64                 `json:"setItems" firestore:"setItems"`
+	SetPerks          []ItemSetPerkDefinition `json:"setPerks" firestore:"setPerks"`
+	Hash              int64                   `json:"hash" firestore:"hash"`
+	Index             int                     `json:"index" firestore:"index"`
+	Redacted          bool                    `json:"redacted" firestore:"redacted"`
+	Blacklisted       bool                    `json:"blacklisted" firestore:"blacklisted"`
+}
+
+type ItemSetPerkDefinition struct {
+	RequiredSetCount int   `json:"requiredSetCount" firestore:"requiredSetCount"`
+	SandboxPerkHash  int64 `json:"sandboxPerkHash" firestore:"sandboxPerkHash"`
 }
 
 type TranslationBlock struct {
@@ -614,6 +631,7 @@ const (
 	ItemDefinitionCollection   ManifestCollection = "d2ItemDefinitions"
 	SandboxPerkCollection      ManifestCollection = "d2SandboxPerks"
 	RecordDefinitionCollection ManifestCollection = "d2RecordDefinitions"
+	EquipableItemSetCollection ManifestCollection = "d2EquipableItemSets"
 )
 
 type SessionWeaponSummary struct {
@@ -1037,7 +1055,41 @@ func GetDamageTypesByIDs(ctx context.Context, db *firestore.Client, ids []int64)
 	return utils.ToMap[DamageType, string](items, func(t DamageType) string { return strconv.FormatInt(t.Hash, 10) })
 }
 
-func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.ClientWithResponses, membershipID int64, membershipType int64, items []bungie.ItemComponent, stats map[string]StatDefinition) (Loadout, error) {
+func GetEquipableItemSets(ctx context.Context, db *firestore.Client) (map[string]EquipableItemSetDefinition, error) {
+	start := time.Now()
+	docs, err := db.Collection(string(EquipableItemSetCollection)).Documents(ctx).GetAll()
+	if err != nil {
+		return nil, err
+	}
+	results, err := utils.GetAllToStructs[EquipableItemSetDefinition](docs)
+	if err != nil {
+		return nil, err
+	}
+	clog.WithGroupFields(ctx, "db.getEquipableItemSets", clog.Fields{
+		"collection":   string(EquipableItemSetCollection),
+		"rowsReturned": len(results),
+		"durationMs":   time.Since(start).Milliseconds(),
+	})
+	return utils.ToMap[EquipableItemSetDefinition, string](results, func(t EquipableItemSetDefinition) string {
+		return strconv.FormatInt(t.Hash, 10)
+	})
+}
+
+func GetEquipableItemSetsByIDs(ctx context.Context, db *firestore.Client, ids []int64) (map[string]EquipableItemSetDefinition, error) {
+	idStrs := make([]string, 0, len(ids))
+	for _, id := range ids {
+		idStrs = append(idStrs, strconv.FormatInt(id, 10))
+	}
+	items, err := batchedFetch[EquipableItemSetDefinition](ctx, db, EquipableItemSetCollection, idStrs)
+	if err != nil {
+		return nil, err
+	}
+	return utils.ToMap[EquipableItemSetDefinition, string](items, func(t EquipableItemSetDefinition) string {
+		return strconv.FormatInt(t.Hash, 10)
+	})
+}
+
+func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.ClientWithResponses, membershipID int64, membershipType int64, items []bungie.ItemComponent, stats map[string]StatDefinition) (Loadout, []ArmorSetBonus, error) {
 	start := time.Now()
 	loadout := make(Loadout)
 	destinyItems := make(map[string]bungie.DestinyItem)
@@ -1108,17 +1160,31 @@ func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.Clie
 	}
 	d2Items, err := GetItemsByIDs(ctx, db, itemHashes)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// Fine to pull all. Only a few damage types
 	damageTypes, err := GetDamageTypes(ctx, db)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+
+	itemSets, err := GetEquipableItemSets(ctx, db)
+	if err != nil {
+		clog.WithGroupField(ctx, "loadoutService.buildLoadout", "warning", clog.Fields{
+			"type": "equipable_item_sets",
+		})
+	}
+	for _, setDef := range itemSets {
+		for _, sp := range setDef.SetPerks {
+			if sp.SandboxPerkHash != 0 {
+				perkHashes = append(perkHashes, sp.SandboxPerkHash)
+			}
+		}
 	}
 
 	perks, err := GetPerksByIDs(ctx, db, perkHashes)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for instanceID, detail := range destinyItems {
 		snap := ItemSnapshot{
@@ -1139,11 +1205,13 @@ func buildLoadout(ctx context.Context, db *firestore.Client, client *bungie.Clie
 		snap.BucketHash = &result.BaseInfo.BucketHash
 		loadout[strconv.FormatInt(snap.ItemProperties.BaseInfo.BucketHash, 10)] = snap
 	}
+	armorSetBonuses := generateArmorSetBonuses(ctx, loadout, itemSets, perks)
 	clog.WithGroupFields(ctx, "loadoutService.buildLoadout", clog.Fields{
-		"itemsResolved": len(loadout),
-		"durationMs":    time.Since(start).Milliseconds(),
+		"itemsResolved":        len(loadout),
+		"armorSetBonusesCount": len(armorSetBonuses),
+		"durationMs":           time.Since(start).Milliseconds(),
 	})
-	return loadout, nil
+	return loadout, armorSetBonuses, nil
 }
 func GetItemDetails(ctx context.Context, client *bungie.ClientWithResponses, membershipID int64, membershipType int64, instanceID string) (*bungie.DestinyItem, error) {
 	start := time.Now()

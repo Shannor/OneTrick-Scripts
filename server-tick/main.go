@@ -17,14 +17,15 @@ import (
 )
 
 type Config struct {
-	taskNum           int64
-	attemptNum        string
-	DestinyAPIKey     string
-	SkipSave          bool
-	DryRun            bool
-	BackfillGameModes bool
-	ProjectID         string
-	EmulatorHost      string
+	taskNum                 int64
+	attemptNum              string
+	DestinyAPIKey           string
+	SkipSave                bool
+	DryRun                  bool
+	BackfillGameModes       bool
+	BackfillArmorSetBonuses bool
+	ProjectID               string
+	EmulatorHost            string
 }
 
 func configFromEnv() (Config, error) {
@@ -59,17 +60,19 @@ func configFromEnv() (Config, error) {
 	fs.SetOutput(io.Discard)
 
 	var (
-		useEmulator           bool
-		emulatorHost          string
-		projIDFlag            string
-		dryRunFlag            bool
-		backfillGameModesFlag bool
+		useEmulator                 bool
+		emulatorHost                string
+		projIDFlag                  string
+		dryRunFlag                  bool
+		backfillGameModesFlag       bool
+		backfillArmorSetBonusesFlag bool
 	)
 	fs.BoolVar(&useEmulator, "use-emulator", false, "Use local Firestore emulator/docker DB")
 	fs.StringVar(&emulatorHost, "emulator-host", "", "Firestore emulator host:port (e.g. 127.0.0.1:8081)")
 	fs.StringVar(&projIDFlag, "project-id", "", "Google Cloud / Firestore project ID (defaults to gruntt-destiny)")
 	fs.BoolVar(&dryRunFlag, "dry-run", false, "Run without performing any writes")
 	fs.BoolVar(&backfillGameModesFlag, "backfill-game-modes", false, "Backfill activityHistory.estimatedGameMode on all aggregates and exit")
+	fs.BoolVar(&backfillArmorSetBonusesFlag, "backfill-armor-set-bonuses", false, "Backfill armorSetBonuses on all snapshots and exit")
 
 	_ = fs.Parse(os.Args[1:])
 
@@ -79,6 +82,10 @@ func configFromEnv() (Config, error) {
 	backfillEnv, _ := stringToInt(os.Getenv("BACKFILL_GAME_MODES"))
 	if backfillGameModesFlag || backfillEnv == 1 {
 		config.BackfillGameModes = true
+	}
+	backfillSetBonusesEnv, _ := stringToInt(os.Getenv("BACKFILL_ARMOR_SET_BONUSES"))
+	if backfillArmorSetBonusesFlag || backfillSetBonusesEnv == 1 {
+		config.BackfillArmorSetBonuses = true
 	}
 
 	config.ProjectID = defaultProjectID
@@ -173,12 +180,13 @@ func runServerTick(ctx context.Context) error {
 		return fmt.Errorf("failed to get config: %w", err)
 	}
 	clog.WithGroupFields(ctx, "request", clog.Fields{
-		"taskIndex":         config.taskNum,
-		"taskAttempt":       config.attemptNum,
-		"dryRun":            config.DryRun,
-		"skipSave":          config.SkipSave,
-		"backfillGameModes": config.BackfillGameModes,
-		"projectId":         config.ProjectID,
+		"taskIndex":               config.taskNum,
+		"taskAttempt":             config.attemptNum,
+		"dryRun":                  config.DryRun,
+		"skipSave":                config.SkipSave,
+		"backfillGameModes":       config.BackfillGameModes,
+		"backfillArmorSetBonuses": config.BackfillArmorSetBonuses,
+		"projectId":               config.ProjectID,
 	})
 	if config.EmulatorHost != "" {
 		clog.WithGroupFields(ctx, "request", clog.Fields{
@@ -204,6 +212,15 @@ func runServerTick(ctx context.Context) error {
 
 	if config.BackfillGameModes {
 		_, err := BackfillEstimatedGameModes(ctx, db, config.DryRun)
+		if err != nil {
+			errorsTotal++
+			return err
+		}
+		return nil
+	}
+
+	if config.BackfillArmorSetBonuses {
+		_, err := BackfillArmorSetBonuses(ctx, db, config.DryRun)
 		if err != nil {
 			errorsTotal++
 			return err

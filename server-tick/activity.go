@@ -150,7 +150,7 @@ func setBaseBungieURL(value *string) string {
 	return fmt.Sprintf("%s%s", "https://www.bungie.net", *value)
 }
 
-func GetLoadout(ctx context.Context, db *firestore.Client, client *bungie.ClientWithResponses, membershipID int64, membershipType int64, characterID string) (Loadout, map[string]ClassStat, *time.Time, error) {
+func GetLoadout(ctx context.Context, db *firestore.Client, client *bungie.ClientWithResponses, membershipID int64, membershipType int64, characterID string) (Loadout, map[string]ClassStat, []ArmorSetBonus, *time.Time, error) {
 	start := time.Now()
 	var components []int32
 	components = append(components, CharactersEquipment, CharactersCode)
@@ -164,7 +164,7 @@ func GetLoadout(ctx context.Context, db *firestore.Client, client *bungie.Client
 			"characterId": characterID,
 			"durationMs":  time.Since(apiStart).Milliseconds(),
 		})
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	clog.WithGroupFields(ctx, "bungieClient.getProfile", clog.Fields{
 		"characterId": characterID,
@@ -175,7 +175,7 @@ func GetLoadout(ctx context.Context, db *firestore.Client, client *bungie.Client
 	// TODO: Migrate snapshot to include the guns information as it is now, since mods and perks could change on the same gun.
 
 	if test.StatusCode() != http.StatusOK || test.JSON200 == nil {
-		return nil, nil, nil, fmt.Errorf("no response found (status %d)", test.StatusCode())
+		return nil, nil, nil, nil, fmt.Errorf("no response found (status %d)", test.StatusCode())
 	}
 
 	timeStamp := test.JSON200.Response.ResponseMintedTimestamp
@@ -230,15 +230,16 @@ func GetLoadout(ctx context.Context, db *firestore.Client, client *bungie.Client
 		}
 
 	}
-	loadout, err := buildLoadout(ctx, db, client, membershipID, membershipType, results, statDefinitions)
+	loadout, armorSetBonuses, err := buildLoadout(ctx, db, client, membershipID, membershipType, results, statDefinitions)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	clog.WithGroupFields(ctx, "activityService.getLoadout", clog.Fields{
-		"characterId":    characterID,
-		"equipmentCount": len(results),
-		"loadoutCount":   len(loadout),
-		"durationMs":     time.Since(start).Milliseconds(),
+		"characterId":          characterID,
+		"equipmentCount":       len(results),
+		"loadoutCount":         len(loadout),
+		"armorSetBonusesCount": len(armorSetBonuses),
+		"durationMs":           time.Since(start).Milliseconds(),
 	})
-	return loadout, stats, timeStamp, nil
+	return loadout, stats, armorSetBonuses, timeStamp, nil
 }

@@ -407,6 +407,7 @@ type ItemProperties struct {
 type BaseItemInfo struct {
 	BucketHash                 int64         `firestore:"bucketHash" json:"bucketHash"`
 	Damage                     *DamageInfo   `firestore:"damageInfo" json:"damage,omitempty"`
+	EquipableItemSetHash       *int64        `firestore:"equipableItemSetHash,omitempty" json:"equipableItemSetHash,omitempty"`
 	InstanceId                 string        `firestore:"instanceId" json:"instanceId"`
 	ItemHash                   int64         `firestore:"itemHash" json:"itemHash"`
 	Name                       string        `firestore:"name" json:"name"`

@@ -1,4 +1,4 @@
-.PHONY: help deploy-server-tick deploy-server-tick-metrics deploy-migration execute-server-tick execute-migration run-server-tick-local run-server-tick-local-dry run-server-tick-local-env run-server-tick-examples backfill-game-modes-prod-dry backfill-game-modes-prod
+.PHONY: help deploy-server-tick deploy-server-tick-metrics deploy-migration execute-server-tick execute-migration run-server-tick-local run-server-tick-local-dry run-server-tick-local-env run-server-tick-examples backfill-game-modes-prod-dry backfill-game-modes-prod backfill-armor-set-bonuses-prod-dry backfill-armor-set-bonuses-prod
 
 # ====================================================================================
 # Variables
@@ -89,3 +89,11 @@ backfill-game-modes-prod-dry:
 ## Runs estimatedGameMode backfill against production Firestore DB.
 backfill-game-modes-prod:
 	cd $(SERVER_TICK_SOURCE) && unset FIRESTORE_EMULATOR_HOST && go run . -backfill-game-modes
+
+## Runs armorSetBonuses backfill in dry-run mode against production Firestore DB.
+backfill-armor-set-bonuses-prod-dry:
+	cd $(SERVER_TICK_SOURCE) && unset FIRESTORE_EMULATOR_HOST && go run . -backfill-armor-set-bonuses -dry-run
+
+## Runs armorSetBonuses backfill against production Firestore DB.
+backfill-armor-set-bonuses-prod:
+	cd $(SERVER_TICK_SOURCE) && unset FIRESTORE_EMULATOR_HOST && go run . -backfill-armor-set-bonuses

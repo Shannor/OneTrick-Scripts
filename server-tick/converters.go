@@ -55,6 +55,7 @@ func generateBaseInfo(item *bungie.DestinyItem, items map[string]ItemDefinition,
 
 	base := BaseItemInfo{
 		BucketHash:                 int64(*c.BucketHash),
+		EquipableItemSetHash:       it.EquippingBlock.EquipableItemSetHash,
 		InstanceId:                 *c.ItemInstanceId,
 		ItemHash:                   int64(*c.ItemHash),
 		Name:                       name,
@@ -581,4 +582,120 @@ func generateClassStats(ctx context.Context, statDefinitions map[string]StatDefi
 		results[key] = i
 	}
 	return results
+}
+
+func generateArmorSetBonuses(
+	ctx context.Context,
+	loadout Loadout,
+	itemSets map[string]EquipableItemSetDefinition,
+	perks map[string]PerkDefinition,
+) []ArmorSetBonus {
+	if len(loadout) == 0 || len(itemSets) == 0 {
+		return nil
+	}
+
+	armorBuckets := []string{
+		strconv.FormatUint(uint64(HelmetArmor), 10),
+		strconv.FormatUint(uint64(GauntletsArmor), 10),
+		strconv.FormatUint(uint64(ChestArmor), 10),
+		strconv.FormatUint(uint64(LegArmor), 10),
+		strconv.FormatUint(uint64(ClassArmor), 10),
+	}
+
+	// Build itemHash -> setHash index from setItems (and direct EquipableItemSetHash if present)
+	itemToSetHash := make(map[int64]int64)
+	for _, setDef := range itemSets {
+		for _, itemHash := range setDef.SetItems {
+			itemToSetHash[itemHash] = setDef.Hash
+		}
+	}
+
+	setCounts := make(map[int64]int)
+	for _, bucketKey := range armorBuckets {
+		itemSnap, ok := loadout[bucketKey]
+		if !ok {
+			continue
+		}
+		setHash, found := itemToSetHash[itemSnap.ItemHash]
+		if !found && itemSnap.ItemProperties.BaseInfo.EquipableItemSetHash != nil {
+			setHash = *itemSnap.ItemProperties.BaseInfo.EquipableItemSetHash
+			found = setHash != 0
+		}
+		if found {
+			setCounts[setHash]++
+		}
+	}
+
+	if len(setCounts) == 0 {
+		return nil
+	}
+
+	var results []ArmorSetBonus
+	for setHash, equippedCount := range setCounts {
+		setDef, ok := itemSets[strconv.FormatInt(setHash, 10)]
+		if !ok {
+			continue
+		}
+		var activePerks []ArmorSetBonusPerk
+		for _, setPerk := range setDef.SetPerks {
+			if setPerk.RequiredSetCount <= 0 || equippedCount < setPerk.RequiredSetCount {
+				continue
+			}
+			perkDef, ok := perks[strconv.FormatInt(setPerk.SandboxPerkHash, 10)]
+			if !ok {
+				clog.WithGroupField(ctx, "converterService.generateArmorSetBonuses", "warning", clog.Fields{
+					"type":     "missing_set_bonus_perk",
+					"setHash":  setHash,
+					"perkHash": setPerk.SandboxPerkHash,
+				})
+				continue
+			}
+			var iconPath *string
+			if perkDef.DisplayProperties.Icon != "" {
+				iconPath = new(setBaseBungieURL(&perkDef.DisplayProperties.Icon))
+			}
+			desc := perkDef.DisplayProperties.Description
+			activePerks = append(activePerks, ArmorSetBonusPerk{
+				RequiredSetCount: setPerk.RequiredSetCount,
+				Hash:             setPerk.SandboxPerkHash,
+				Name:             perkDef.DisplayProperties.Name,
+				Description:      &desc,
+				IconPath:         iconPath,
+			})
+		}
+		if len(activePerks) == 0 {
+			continue
+		}
+		sortArmorSetBonusPerks(activePerks)
+		results = append(results, ArmorSetBonus{
+			SetHash:     setDef.Hash,
+			SetName:     setDef.DisplayProperties.Name,
+			ActiveCount: equippedCount,
+			ActivePerks: activePerks,
+		})
+	}
+
+	sortArmorSetBonuses(results)
+	return results
+}
+
+func sortArmorSetBonusPerks(perks []ArmorSetBonusPerk) {
+	for i := 1; i < len(perks); i++ {
+		for j := i; j > 0; j-- {
+			if perks[j].RequiredSetCount < perks[j-1].RequiredSetCount ||
+				(perks[j].RequiredSetCount == perks[j-1].RequiredSetCount && perks[j].Hash < perks[j-1].Hash) {
+				perks[j], perks[j-1] = perks[j-1], perks[j]
+			} else {
+				break
+			}
+		}
+	}
+}
+
+func sortArmorSetBonuses(bonuses []ArmorSetBonus) {
+	for i := 1; i < len(bonuses); i++ {
+		for j := i; j > 0 && bonuses[j].SetHash < bonuses[j-1].SetHash; j-- {
+			bonuses[j], bonuses[j-1] = bonuses[j-1], bonuses[j]
+		}
+	}
 }

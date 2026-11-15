@@ -52,7 +52,7 @@ func generateSnapshot(ctx context.Context, db *firestore.Client, client *bungie.
 		return nil, fmt.Errorf("invalid membership id: %w", err)
 	}
 
-	loadout, stats, timestamp, err := GetLoadout(ctx, db, client, memID, membershipType, characterID)
+	loadout, stats, armorSetBonuses, timestamp, err := GetLoadout(ctx, db, client, memID, membershipType, characterID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch profile data: %w", err)
 	}
@@ -60,11 +60,17 @@ func generateSnapshot(ctx context.Context, db *firestore.Client, client *bungie.
 		return nil, fmt.Errorf("failed to fetch timestamp for profile data: %w", err)
 	}
 
+	var setBonusesPtr *[]ArmorSetBonus
+	if len(armorSetBonuses) > 0 {
+		setBonusesPtr = &armorSetBonuses
+	}
+
 	return &CharacterSnapshot{
-		UserID:      userID,
-		CharacterID: characterID,
-		Stats:       new(stats),
-		Loadout:     loadout,
+		UserID:          userID,
+		CharacterID:     characterID,
+		Stats:           new(stats),
+		Loadout:         loadout,
+		ArmorSetBonuses: setBonusesPtr,
 	}, nil
 }
 
@@ -412,7 +418,153 @@ func EnrichInstancePerformance(snapshot *CharacterSnapshot, performance Instance
 	return result, nil
 }
 
+// BackfillArmorSetBonuses iterates over all snapshot documents in Firestore,
+// computes active ArmorSetBonuses from each snapshot's equipped armor pieces using
+// d2EquipableItemSets and d2SandboxPerks, and persists armorSetBonuses on any
+// snapshot where it is missing or differs.
+func BackfillArmorSetBonuses(ctx context.Context, db *firestore.Client, dryRun bool) (int, error) {
+	start := time.Now()
+	itemSets, err := GetEquipableItemSets(ctx, db)
+	if err != nil {
+		return 0, fmt.Errorf("failed to fetch equipable item sets for backfill: %w", err)
+	}
+
+	var perkHashes []int64
+	for _, setDef := range itemSets {
+		for _, sp := range setDef.SetPerks {
+			if sp.SandboxPerkHash != 0 {
+				perkHashes = append(perkHashes, sp.SandboxPerkHash)
+			}
+		}
+	}
+	perks, err := GetPerksByIDs(ctx, db, perkHashes)
+	if err != nil {
+		return 0, fmt.Errorf("failed to fetch set bonus perks for backfill: %w", err)
+	}
+
+	docs, err := db.Collection(snapshotCollection).Documents(ctx).GetAll()
+	if err != nil {
+		clog.WithGroupFields(ctx, "snapshotService.backfillArmorSetBonuses", clog.Fields{
+			"collection": snapshotCollection,
+			"dryRun":     dryRun,
+			"durationMs": time.Since(start).Milliseconds(),
+		})
+		return 0, fmt.Errorf("failed to fetch snapshots for armor set bonus backfill: %w", err)
+	}
+
+	var (
+		updatedCount         int
+		alreadySetCount      int
+		noBonusCount         int
+		twoPieceOnlyCount    int
+		fourPieceCount       int
+		splitTwoPlusTwoCount int
+	)
+
+	err = clog.LoopRollup(ctx, "snapshotService.backfillArmorSetBonusItem", docs, func(iterCtx context.Context, _ int, doc *firestore.DocumentSnapshot) error {
+		defer func() {
+			if bag := clog.BagFromContext(iterCtx); bag != nil && bag.HasWarning() {
+				clog.WithGroupField(ctx, "snapshotService.backfillArmorSetBonusItem", "warning", true)
+			}
+		}()
+		clog.WithGroupField(iterCtx, "snapshot", "docId", doc.Ref.ID)
+
+		var snap CharacterSnapshot
+		if err := doc.DataTo(&snap); err != nil {
+			return fmt.Errorf("failed to parse snapshot %s: %w", doc.Ref.ID, err)
+		}
+
+		computed := generateArmorSetBonuses(iterCtx, snap.Loadout, itemSets, perks)
+		if len(computed) == 0 {
+			noBonusCount++
+			if snap.ArmorSetBonuses == nil || len(*snap.ArmorSetBonuses) == 0 {
+				alreadySetCount++
+				return nil
+			}
+			if !dryRun {
+				_, err := doc.Ref.Update(iterCtx, []firestore.Update{
+					{
+						Path:  "armorSetBonuses",
+						Value: firestore.Delete,
+					},
+				})
+				if err != nil {
+					return fmt.Errorf("failed to clear armorSetBonuses on snapshot %s: %w", doc.Ref.ID, err)
+				}
+			}
+			updatedCount++
+			return nil
+		}
+
+		if len(computed) >= 2 {
+			splitTwoPlusTwoCount++
+		} else if computed[0].ActiveCount >= 4 {
+			fourPieceCount++
+		} else {
+			twoPieceOnlyCount++
+		}
+
+		if snap.ArmorSetBonuses != nil && armorSetBonusesEqual(*snap.ArmorSetBonuses, computed) {
+			alreadySetCount++
+			return nil
+		}
+
+		if !dryRun {
+			_, err := doc.Ref.Update(iterCtx, []firestore.Update{
+				{
+					Path:  "armorSetBonuses",
+					Value: computed,
+				},
+			})
+			if err != nil {
+				return fmt.Errorf("failed to update armorSetBonuses on snapshot %s: %w", doc.Ref.ID, err)
+			}
+		}
+		updatedCount++
+		return nil
+	})
+
+	clog.WithGroupFields(ctx, "snapshotService.backfillArmorSetBonuses", clog.Fields{
+		"collection":           snapshotCollection,
+		"totalInspected":       len(docs),
+		"updatedCount":         updatedCount,
+		"alreadySetCount":      alreadySetCount,
+		"noBonusCount":         noBonusCount,
+		"twoPieceOnlyCount":    twoPieceOnlyCount,
+		"fourPieceCount":       fourPieceCount,
+		"splitTwoPlusTwoCount": splitTwoPlusTwoCount,
+		"dryRun":               dryRun,
+		"durationMs":           time.Since(start).Milliseconds(),
+	})
+
+	return updatedCount, err
+}
+
+func armorSetBonusesEqual(a, b []ArmorSetBonus) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].SetHash != b[i].SetHash || a[i].SetName != b[i].SetName || a[i].ActiveCount != b[i].ActiveCount {
+			return false
+		}
+		if len(a[i].ActivePerks) != len(b[i].ActivePerks) {
+			return false
+		}
+		for j := range a[i].ActivePerks {
+			pa, pb := a[i].ActivePerks[j], b[i].ActivePerks[j]
+			if pa.RequiredSetCount != pb.RequiredSetCount || pa.Hash != pb.Hash || pa.Name != pb.Name {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 type CharacterSnapshot struct {
+	// ArmorSetBonuses Active armor set bonuses unlocked by equipped armor pieces
+	ArmorSetBonuses *[]ArmorSetBonus `firestore:"armorSetBonuses,omitempty" json:"armorSetBonuses,omitempty"`
+
 	// CharacterID Id of the character being recorded
 	CharacterID string `firestore:"characterId" json:"characterId"`
 
@@ -437,6 +589,21 @@ type CharacterSnapshot struct {
 
 	// UserID Id of the user it belongs to
 	UserID string `firestore:"userId" json:"userId"`
+}
+
+type ArmorSetBonus struct {
+	SetHash     int64               `firestore:"setHash" json:"setHash"`
+	SetName     string              `firestore:"setName" json:"setName"`
+	ActiveCount int                 `firestore:"activeCount" json:"activeCount"`
+	ActivePerks []ArmorSetBonusPerk `firestore:"activePerks" json:"activePerks"`
+}
+
+type ArmorSetBonusPerk struct {
+	RequiredSetCount int     `firestore:"requiredSetCount" json:"requiredSetCount"`
+	Hash             int64   `firestore:"hash" json:"hash"`
+	Name             string  `firestore:"name" json:"name"`
+	Description      *string `firestore:"description,omitempty" json:"description,omitempty"`
+	IconPath         *string `firestore:"iconPath,omitempty" json:"iconPath,omitempty"`
 }
 type Loadout map[string]ItemSnapshot
 
