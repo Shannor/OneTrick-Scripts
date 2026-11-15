@@ -1,7 +1,9 @@
 package main
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"serverTick/bungie"
 	"serverTick/generator"
@@ -12,12 +14,112 @@ import (
 
 	"cloud.google.com/go/firestore"
 	clog "github.com/Shannor/canonical-logger"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
 	snapshotCollection = "snapshots"
 	historyCollection  = "histories"
 )
+
+var ErrSnapshotNotFound = errors.New("snapshot not found")
+
+type snapshotStore interface {
+	getByHash(ctx context.Context, hash string) (*CharacterSnapshot, error)
+	getDoc(ctx context.Context, snapshotID string) (*CharacterSnapshot, error)
+	createSnapshotDoc(ctx context.Context, snapshot CharacterSnapshot) (CharacterSnapshot, error)
+	createHistory(ctx context.Context, og CharacterSnapshot) (*string, error)
+	clearMergeArchiveFields(ctx context.Context, snapshotID string) error
+	listRecentHistories(ctx context.Context, userID, characterID string, minTime, maxTime time.Time) ([]History, error)
+}
+
+type firestoreSnapshotStore struct {
+	db *firestore.Client
+}
+
+func (s *firestoreSnapshotStore) getByHash(ctx context.Context, hash string) (*CharacterSnapshot, error) {
+	return optionalGetByHash(s.db, ctx, hash)
+}
+
+func (s *firestoreSnapshotStore) getDoc(ctx context.Context, snapshotID string) (*CharacterSnapshot, error) {
+	return Get(ctx, s.db, snapshotID)
+}
+
+func (s *firestoreSnapshotStore) createSnapshotDoc(ctx context.Context, snapshot CharacterSnapshot) (CharacterSnapshot, error) {
+	createStart := time.Now()
+	ref := s.db.Collection(snapshotCollection).NewDoc()
+	snapshot.ID = ref.ID
+	_, err := ref.Set(ctx, snapshot)
+	clog.WithGroupFields(ctx, "db.createSnapshot", clog.Fields{
+		"collection": snapshotCollection,
+		"snapshotId": snapshot.ID,
+		"durationMs": time.Since(createStart).Milliseconds(),
+	})
+	if err != nil {
+		return CharacterSnapshot{}, err
+	}
+	return snapshot, nil
+}
+
+func (s *firestoreSnapshotStore) createHistory(ctx context.Context, og CharacterSnapshot) (*string, error) {
+	return createHistoryEntry(ctx, s.db, og)
+}
+
+func (s *firestoreSnapshotStore) clearMergeArchiveFields(ctx context.Context, snapshotID string) error {
+	_, err := s.db.Collection(snapshotCollection).Doc(snapshotID).Update(ctx, []firestore.Update{
+		{Path: "mergedIntoId", Value: firestore.Delete},
+		{Path: "mergedAt", Value: firestore.Delete},
+		{Path: "updatedAt", Value: time.Now()},
+	})
+	return err
+}
+
+func (s *firestoreSnapshotStore) listRecentHistories(ctx context.Context, userID, characterID string, minTime, maxTime time.Time) ([]History, error) {
+	docs, err := s.db.CollectionGroup(historyCollection).
+		Where("userId", "==", userID).
+		Where("characterId", "==", characterID).
+		Where("timestamp", ">=", minTime).
+		Where("timestamp", "<=", maxTime).
+		OrderBy("timestamp", firestore.Desc).
+		Documents(ctx).GetAll()
+	if err != nil {
+		return nil, err
+	}
+	if len(docs) == 0 {
+		return nil, nil
+	}
+	return utils.GetAllToStructs[History](docs)
+}
+
+func isArchived(snap *CharacterSnapshot) bool {
+	return snap != nil && snap.MergedIntoID != nil && *snap.MergedIntoID != ""
+}
+
+func resolveAutoForwardTarget(ctx context.Context, store snapshotStore, archivedSnap *CharacterSnapshot) (*CharacterSnapshot, error) {
+	if !isArchived(archivedSnap) {
+		return archivedSnap, nil
+	}
+	targetSnap, err := store.getDoc(ctx, *archivedSnap.MergedIntoID)
+	if err == nil && isArchived(targetSnap) {
+		targetSnap, err = store.getDoc(ctx, *targetSnap.MergedIntoID)
+	}
+	if err != nil {
+		if errors.Is(err, ErrSnapshotNotFound) {
+			_ = store.clearMergeArchiveFields(ctx, archivedSnap.ID)
+			clog.WithGroupField(ctx, "snapshotService.autoForward", "warning", clog.Fields{
+				"type":             "deleted_merge_target",
+				"archivedSnapshot": archivedSnap.ID,
+				"mergedIntoId":     *archivedSnap.MergedIntoID,
+			})
+			archivedSnap.MergedIntoID = nil
+			archivedSnap.MergedAt = nil
+			return nil, nil
+		}
+		return nil, err
+	}
+	return targetSnap, nil
+}
 
 func Save(ctx context.Context, db *firestore.Client, client *bungie.ClientWithResponses, userID, membershipID, characterID string) (*CharacterSnapshot, error) {
 	start := time.Now()
@@ -32,13 +134,19 @@ func Save(ctx context.Context, db *firestore.Client, client *bungie.ClientWithRe
 	if err != nil {
 		return nil, fmt.Errorf("failed to create snapshot: %w", err)
 	}
-	data.ID = *id
+	result := data
+	if id != nil {
+		data.ID = *id
+		if fetched, getErr := Get(ctx, db, *id); getErr == nil && fetched != nil {
+			result = fetched
+		}
+	}
 	clog.WithGroupFields(ctx, "snapshotService.save", clog.Fields{
-		"snapshotId":  data.ID,
+		"snapshotId":  result.ID,
 		"characterId": characterID,
 		"durationMs":  time.Since(start).Milliseconds(),
 	})
-	return data, nil
+	return result, nil
 }
 func generateSnapshot(ctx context.Context, db *firestore.Client, client *bungie.ClientWithResponses, userID, membershipID, characterID string) (*CharacterSnapshot, error) {
 
@@ -85,10 +193,10 @@ func generateHash(snapshot CharacterSnapshot) (string, error) {
 		// Add each item's instance ID
 		hashing = append(hashing, item.ItemProperties.BaseInfo.InstanceId)
 
-		// Sort perks by hash to ensure a deterministic order.
-		perks := item.ItemProperties.Perks
+		// Sort perks by hash to ensure a deterministic order without mutating caller slice.
+		perks := slices.Clone(item.ItemProperties.Perks)
 		slices.SortFunc(perks, func(a, b Perk) int {
-			return int(a.Hash - b.Hash)
+			return cmp.Compare(a.Hash, b.Hash)
 		})
 
 		// Add each item's perks ids
@@ -104,9 +212,12 @@ func generateHash(snapshot CharacterSnapshot) (string, error) {
 }
 
 func create(ctx context.Context, db *firestore.Client, userID string, snapshot CharacterSnapshot) (*string, error) {
+	return createWithStore(ctx, &firestoreSnapshotStore{db: db}, userID, snapshot)
+}
 
+func createWithStore(ctx context.Context, store snapshotStore, userID string, snapshot CharacterSnapshot) (*string, error) {
 	if snapshot.Hash == "" {
-		// Instance has of each item in the Loadout
+		// Instance hash of each item in the Loadout
 		hash, err := generateHash(snapshot)
 		if err != nil {
 			return nil, err
@@ -114,15 +225,27 @@ func create(ctx context.Context, db *firestore.Client, userID string, snapshot C
 		snapshot.Hash = hash
 	}
 
-	existingSnapshot, err := optionalGetByHash(db, ctx, snapshot.Hash)
+	existingSnapshot, err := store.getByHash(ctx, snapshot.Hash)
 	if err != nil {
 		return nil, err
 	}
 	if existingSnapshot != nil {
-		return createHistoryEntry(ctx, db, *existingSnapshot)
+		if isArchived(existingSnapshot) {
+			targetSnap, err := resolveAutoForwardTarget(ctx, store, existingSnapshot)
+			if err != nil {
+				return nil, err
+			}
+			if targetSnap != nil {
+				clog.WithGroupFields(ctx, "snapshotService.create", clog.Fields{
+					"autoForwardedFrom": existingSnapshot.ID,
+					"snapshotId":        targetSnap.ID,
+				})
+				return store.createHistory(ctx, *targetSnap)
+			}
+		}
+		return store.createHistory(ctx, *existingSnapshot)
 	}
 
-	createStart := time.Now()
 	snapshot.UserID = userID
 	now := time.Now()
 	snapshot.CreatedAt = now
@@ -130,18 +253,11 @@ func create(ctx context.Context, db *firestore.Client, userID string, snapshot C
 	if snapshot.Name == "" {
 		snapshot.Name = generator.PVPName()
 	}
-	ref := db.Collection(snapshotCollection).NewDoc()
-	snapshot.ID = ref.ID
-	_, err = ref.Set(ctx, snapshot)
-	clog.WithGroupFields(ctx, "db.createSnapshot", clog.Fields{
-		"collection": snapshotCollection,
-		"snapshotId": snapshot.ID,
-		"durationMs": time.Since(createStart).Milliseconds(),
-	})
+	created, err := store.createSnapshotDoc(ctx, snapshot)
 	if err != nil {
 		return nil, err
 	}
-	return createHistoryEntry(ctx, db, snapshot)
+	return store.createHistory(ctx, created)
 }
 
 func optionalGetByHash(db *firestore.Client, ctx context.Context, hash string) (*CharacterSnapshot, error) {
@@ -213,24 +329,22 @@ func createHistoryEntry(ctx context.Context, db *firestore.Client, og CharacterS
 }
 
 func FindBestFit(ctx context.Context, db *firestore.Client, userID string, characterID string, activityPeriod time.Time, weapons map[string]WeaponInstanceMetrics) (*CharacterSnapshot, *SnapshotLink, error) {
+	return findBestFitWithStore(ctx, &firestoreSnapshotStore{db: db}, userID, characterID, activityPeriod, weapons)
+}
+
+func findBestFitWithStore(ctx context.Context, store snapshotStore, userID string, characterID string, activityPeriod time.Time, weapons map[string]WeaponInstanceMetrics) (*CharacterSnapshot, *SnapshotLink, error) {
 	start := time.Now()
 
 	// Get the last hour of snapshots
 	minTime := activityPeriod.Add(time.Duration(-1) * time.Hour)
 	// A game can last about 8 minutes over the starting time
 	maxTime := activityPeriod.Add(time.Duration(15) * time.Minute)
-	docs, err := db.CollectionGroup(historyCollection).
-		Where("userId", "==", userID).
-		Where("characterId", "==", characterID).
-		Where("timestamp", ">=", minTime).
-		Where("timestamp", "<=", maxTime).
-		OrderBy("timestamp", firestore.Desc).
-		Documents(ctx).GetAll()
+	histories, err := store.listRecentHistories(ctx, userID, characterID, minTime, maxTime)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	if docs == nil || len(docs) == 0 {
+	if len(histories) == 0 {
 		link := SnapshotLink{
 			CharacterID:      characterID,
 			ConfidenceLevel:  NotFoundConfidenceLevel,
@@ -250,10 +364,6 @@ func FindBestFit(ctx context.Context, db *firestore.Client, userID string, chara
 		bestFit      *History
 		bestFitScore = 0
 	)
-	histories, err := utils.GetAllToStructs[History](docs)
-	if err != nil {
-		return nil, nil, err
-	}
 
 	weaponSet := make(map[string]bool)
 	for _, weapon := range weapons {
@@ -326,23 +436,58 @@ func FindBestFit(ctx context.Context, db *firestore.Client, userID string, chara
 		level = MediumConfidenceLevel
 	}
 
+	parentID := bestFit.ParentID
 	link := SnapshotLink{
 		CharacterID:      characterID,
 		ConfidenceLevel:  level,
 		ConfidenceSource: SystemConfidenceSource,
 		CreatedAt:        time.Now(),
-		SnapshotID:       &bestFit.ParentID,
+		SnapshotID:       &parentID,
 	}
 
-	snap, err := Get(ctx, db, bestFit.ParentID)
+	snap, err := store.getDoc(ctx, bestFit.ParentID)
 	if err != nil {
+		if errors.Is(err, ErrSnapshotNotFound) {
+			notFoundLink := SnapshotLink{
+				CharacterID:      characterID,
+				ConfidenceLevel:  NotFoundConfidenceLevel,
+				ConfidenceSource: SystemConfidenceSource,
+				CreatedAt:        time.Now(),
+			}
+			clog.WithGroupField(ctx, "snapshotService.findBestFit", "warning", clog.Fields{
+				"type":              "deleted_parent_snapshot",
+				"deletedSnapshotId": bestFit.ParentID,
+				"characterId":       characterID,
+			})
+			clog.WithGroupFields(ctx, "snapshotService.findBestFit", clog.Fields{
+				"characterId":        characterID,
+				"historiesEvaluated": len(histories),
+				"confidenceLevel":    string(NotFoundConfidenceLevel),
+				"durationMs":         time.Since(start).Milliseconds(),
+			})
+			return nil, &notFoundLink, nil
+		}
 		return nil, nil, err
 	}
+
+	if isArchived(snap) {
+		targetSnap, err := resolveAutoForwardTarget(ctx, store, snap)
+		if err != nil {
+			return nil, nil, err
+		}
+		if targetSnap != nil {
+			origID := bestFit.ParentID
+			link.OriginalSnapshotID = &origID
+			link.SnapshotID = &targetSnap.ID
+			snap = targetSnap
+		}
+	}
+
 	clog.WithGroupFields(ctx, "snapshotService.findBestFit", clog.Fields{
 		"characterId":        characterID,
 		"historiesEvaluated": len(histories),
 		"confidenceLevel":    string(level),
-		"snapshotId":         bestFit.ParentID,
+		"snapshotId":         *link.SnapshotID,
 		"durationMs":         time.Since(start).Milliseconds(),
 	})
 	return snap, &link, nil
@@ -357,6 +502,9 @@ func Get(ctx context.Context, db *firestore.Client, snapshotID string) (*Charact
 			"snapshotId": snapshotID,
 			"durationMs": time.Since(start).Milliseconds(),
 		})
+		if status.Code(err) == codes.NotFound {
+			return nil, fmt.Errorf("%w: %s", ErrSnapshotNotFound, snapshotID)
+		}
 		return nil, err
 	}
 	err = data.DataTo(&result)
@@ -427,6 +575,10 @@ type CharacterSnapshot struct {
 
 	// Loadout All buckets that we currently care about, Kinetic, Energy, Heavy and Class for now. Each will be a key in the items.
 	Loadout Loadout `firestore:"loadout" json:"loadout"`
+
+	MergedAt      *time.Time `firestore:"mergedAt,omitempty" json:"mergedAt,omitempty"`
+	MergedFromIDs *[]string  `firestore:"mergedFromIds,omitempty" json:"mergedFromIds,omitempty"`
+	MergedIntoID  *string    `firestore:"mergedIntoId,omitempty" json:"mergedIntoId,omitempty"`
 
 	// Name Name of the snapshot, will probably be generated by default by the system but can be changed by a user
 	Name  string                `firestore:"name" json:"name"`

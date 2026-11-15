@@ -524,10 +524,11 @@ type PlayerStats struct {
 	TimePlayed *StatsValuePair `firestore:"timePlayed" json:"timePlayed,omitempty"`
 }
 type SnapshotLink struct {
-	CharacterID      string           `firestore:"characterId" json:"characterId"`
-	ConfidenceLevel  ConfidenceLevel  `firestore:"confidenceLevel" json:"confidenceLevel"`
-	ConfidenceSource ConfidenceSource `firestore:"confidenceSource" json:"confidenceSource"`
-	CreatedAt        time.Time        `firestore:"createdAt" json:"createdAt"`
+	CharacterID        string           `firestore:"characterId" json:"characterId"`
+	ConfidenceLevel    ConfidenceLevel  `firestore:"confidenceLevel" json:"confidenceLevel"`
+	ConfidenceSource   ConfidenceSource `firestore:"confidenceSource" json:"confidenceSource"`
+	CreatedAt          time.Time        `firestore:"createdAt" json:"createdAt"`
+	OriginalSnapshotID *string          `firestore:"originalSnapshotId,omitempty" json:"originalSnapshotId,omitempty"`
 
 	// SessionID Optional ID of a session if this Snapshot link was added by a session check-in. Will be null in the case, where the link is added after the fact
 	SessionID *string `firestore:"sessionId" json:"sessionId,omitempty"`
