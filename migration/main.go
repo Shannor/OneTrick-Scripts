@@ -55,7 +55,7 @@ func configFromEnv() (Config, error) {
 		taskNumFlag int64
 	)
 	fs.BoolVar(&dryRunFlag, "dry-run", false, "Run without performing any writes")
-	fs.Int64Var(&taskNumFlag, "task-index", -1, "Override CLOUD_RUN_TASK_INDEX (0-13)")
+	fs.Int64Var(&taskNumFlag, "task-index", -1, "Override CLOUD_RUN_TASK_INDEX (0-14)")
 
 	_ = fs.Parse(os.Args[1:])
 
@@ -341,6 +341,8 @@ func GetVersionByIndex(configuration Configuration, index int64) (string, bool) 
 		return configuration.CrucibleMapVersion, true
 	case 13:
 		return configuration.EquipableItemSetVersion, true
+	case 14:
+		return configuration.ProgressionDefinitionVersion, true
 	default:
 		return "", false
 	}
@@ -606,6 +608,18 @@ func performMigration(ctx context.Context, db *firestore.Client, manifest Manife
 				return strconv.FormatInt(definition.Hash, 10)
 			},
 		)
+	case 14:
+		return migrateCollection(
+			ctx,
+			db,
+			string(ProgressionDefinitionCollection),
+			manifest.ProgressionDefinition,
+			dryRun,
+			func(item any) string {
+				definition := item.(ProgressionDefinition)
+				return strconv.FormatInt(definition.Hash, 10)
+			},
+		)
 	default:
 		clog.WithGroupField(ctx, "migrationService.performMigration", "warning", clog.Fields{
 			"type":  "unsupported_index",
@@ -647,6 +661,8 @@ func GetConfigKeyByIndex(index int64) (string, bool) {
 		return "crucibleMapVersion", true
 	case 13:
 		return "equipableItemSetVersion", true
+	case 14:
+		return "progressionDefinitionVersion", true
 	default:
 		return "", false
 	}

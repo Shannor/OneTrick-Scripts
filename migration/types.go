@@ -64,7 +64,7 @@ type Manifest struct {
 	PlugSetDefinition                        map[string]any                       `json:"DestinyPlugSetDefinition"`
 	PowerCapDefinition                       map[string]any                       `json:"DestinyPowerCapDefinition"`
 	PresentationNodeDefinition               map[string]any                       `json:"DestinyPresentationNodeDefinition"`
-	ProgressionDefinition                    map[string]any                       `json:"DestinyProgressionDefinition"`
+	ProgressionDefinition                    map[string]ProgressionDefinition     `json:"DestinyProgressionDefinition"`
 	ProgressionLevelRequirementDefinition    map[string]any                       `json:"DestinyProgressionLevelRequirementDefinition"`
 	RecordDefinition                         map[string]RecordDefinition          `json:"DestinyRecordDefinition"`
 	RewardAdjusterPointerDefinition          map[string]any                       `json:"DestinyRewardAdjusterPointerDefinition"`
@@ -516,6 +516,21 @@ type ActivityModeDefinition struct {
 	Blacklisted           bool                  `json:"blacklisted" firestore:"blacklisted"`
 }
 
+type ProgressionStepDefinition struct {
+	StepName      string `json:"stepName" firestore:"stepName"`
+	ProgressTotal int    `json:"progressTotal" firestore:"progressTotal"`
+	Icon          string `json:"icon" firestore:"icon"`
+}
+
+type ProgressionDefinition struct {
+	DisplayProperties ModeDisplayProperties       `json:"displayProperties" firestore:"displayProperties"`
+	Steps             []ProgressionStepDefinition `json:"steps" firestore:"steps"`
+	Hash              int64                       `json:"hash" firestore:"hash"`
+	Index             int                         `json:"index" firestore:"index"`
+	Redacted          bool                        `json:"redacted" firestore:"redacted"`
+	Blacklisted       bool                        `json:"blacklisted" firestore:"blacklisted"`
+}
+
 type ManifestResponse struct {
 	Response struct {
 		Version                  string `json:"version"`
@@ -548,20 +563,21 @@ type ContentPaths struct {
 type Configuration struct {
 	ManifestVersion string `json:"manifestVersion" firestore:"manifestVersion"`
 
-	PlaceVersion            string `json:"placeVersion" firestore:"placeVersion"`
-	ActivityVersion         string `json:"activityVersion" firestore:"activityVersion"`
-	ClassVersion            string `json:"classVersion" firestore:"classVersion"`
-	InventoryBucketVersion  string `json:"inventoryBucketVersion" firestore:"inventoryBucketVersion"`
-	RaceVersion             string `json:"raceVersion" firestore:"raceVersion"`
-	ItemCategoryVersion     string `json:"itemCategoryVersion" firestore:"itemCategoryVersion"`
-	DamageVersion           string `json:"damageVersion" firestore:"damageVersion"`
-	ActivityModeVersion     string `json:"activityModeVersion" firestore:"activityModeVersion"`
-	StatDefinitionVersion   string `json:"statDefinitionVersion" firestore:"statDefinitionVersion"`
-	ItemDefinitionVersion   string `json:"itemDefinitionVersion" firestore:"itemDefinitionVersion"`
-	SandboxPerkVersion      string `json:"sandboxPerkVersion" firestore:"sandboxPerkVersion"`
-	RecordDefinitionVersion string `json:"recordDefinitionVersion" firestore:"recordDefinitionVersion"`
-	CrucibleMapVersion      string `json:"crucibleMapVersion" firestore:"crucibleMapVersion"`
-	EquipableItemSetVersion string `json:"equipableItemSetVersion" firestore:"equipableItemSetVersion"`
+	PlaceVersion                 string `json:"placeVersion" firestore:"placeVersion"`
+	ActivityVersion              string `json:"activityVersion" firestore:"activityVersion"`
+	ClassVersion                 string `json:"classVersion" firestore:"classVersion"`
+	InventoryBucketVersion       string `json:"inventoryBucketVersion" firestore:"inventoryBucketVersion"`
+	RaceVersion                  string `json:"raceVersion" firestore:"raceVersion"`
+	ItemCategoryVersion          string `json:"itemCategoryVersion" firestore:"itemCategoryVersion"`
+	DamageVersion                string `json:"damageVersion" firestore:"damageVersion"`
+	ActivityModeVersion          string `json:"activityModeVersion" firestore:"activityModeVersion"`
+	StatDefinitionVersion        string `json:"statDefinitionVersion" firestore:"statDefinitionVersion"`
+	ItemDefinitionVersion        string `json:"itemDefinitionVersion" firestore:"itemDefinitionVersion"`
+	SandboxPerkVersion           string `json:"sandboxPerkVersion" firestore:"sandboxPerkVersion"`
+	RecordDefinitionVersion      string `json:"recordDefinitionVersion" firestore:"recordDefinitionVersion"`
+	CrucibleMapVersion           string `json:"crucibleMapVersion" firestore:"crucibleMapVersion"`
+	EquipableItemSetVersion      string `json:"equipableItemSetVersion" firestore:"equipableItemSetVersion"`
+	ProgressionDefinitionVersion string `json:"progressionDefinitionVersion" firestore:"progressionDefinitionVersion"`
 }
 
 type WeaponBucket = uint32
@@ -612,18 +628,19 @@ const (
 type ManifestCollection string
 
 const (
-	PlaceCollection            ManifestCollection = "d2Places"
-	ActivityCollection         ManifestCollection = "d2Activities"
-	ClassCollection            ManifestCollection = "d2Classes"
-	InventoryBucketCollection  ManifestCollection = "d2InventoryBuckets"
-	RaceCollection             ManifestCollection = "d2Races"
-	ItemCategoryCollection     ManifestCollection = "d2ItemCategories"
-	DamageCollection           ManifestCollection = "d2DamageTypes"
-	ActivityModeCollection     ManifestCollection = "d2ActivityModes"
-	StatDefinitionCollection   ManifestCollection = "d2StatDefinitions"
-	ItemDefinitionCollection   ManifestCollection = "d2ItemDefinitions"
-	SandboxPerkCollection      ManifestCollection = "d2SandboxPerks"
-	RecordDefinitionCollection ManifestCollection = "d2RecordDefinitions"
-	CrucibleMapCollection      ManifestCollection = "crucibleMaps"
-	EquipableItemSetCollection ManifestCollection = "d2EquipableItemSets"
+	PlaceCollection                 ManifestCollection = "d2Places"
+	ActivityCollection              ManifestCollection = "d2Activities"
+	ClassCollection                 ManifestCollection = "d2Classes"
+	InventoryBucketCollection       ManifestCollection = "d2InventoryBuckets"
+	RaceCollection                  ManifestCollection = "d2Races"
+	ItemCategoryCollection          ManifestCollection = "d2ItemCategories"
+	DamageCollection                ManifestCollection = "d2DamageTypes"
+	ActivityModeCollection          ManifestCollection = "d2ActivityModes"
+	StatDefinitionCollection        ManifestCollection = "d2StatDefinitions"
+	ItemDefinitionCollection        ManifestCollection = "d2ItemDefinitions"
+	SandboxPerkCollection           ManifestCollection = "d2SandboxPerks"
+	RecordDefinitionCollection      ManifestCollection = "d2RecordDefinitions"
+	CrucibleMapCollection           ManifestCollection = "crucibleMaps"
+	EquipableItemSetCollection      ManifestCollection = "d2EquipableItemSets"
+	ProgressionDefinitionCollection ManifestCollection = "d2ProgressionDefinitions"
 )
