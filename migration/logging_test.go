@@ -360,3 +360,67 @@ func TestEquipableItemSetMigrationAndManifestDecoding(t *testing.T) {
 	}
 }
 
+func TestProgressionDefinitionMigrationAndManifestDecoding(t *testing.T) {
+	cfg := Configuration{
+		ProgressionDefinitionVersion: "v2.0.0",
+	}
+	gotVersion, ok := GetVersionByIndex(cfg, 14)
+	if !ok || gotVersion != "v2.0.0" {
+		t.Fatalf("GetVersionByIndex(cfg, 14) = (%q, %v), want (\"v2.0.0\", true)", gotVersion, ok)
+	}
+	gotKey, ok := GetConfigKeyByIndex(14)
+	if !ok || gotKey != "progressionDefinitionVersion" {
+		t.Fatalf("GetConfigKeyByIndex(14) = (%q, %v), want (\"progressionDefinitionVersion\", true)", gotKey, ok)
+	}
+
+	rawManifest := `{
+		"DestinyProgressionDefinition": {
+			"3696598664": {
+				"hash": 3696598664,
+				"index": 42,
+				"redacted": false,
+				"blacklisted": false,
+				"displayProperties": {
+					"name": "Competitive Division",
+					"description": "Your current Competitive Crucible division.",
+					"icon": "/common/destiny2_content/icons/comp.png",
+					"hasIcon": true
+				},
+				"steps": [
+					{"stepName": "Unranked", "progressTotal": 5, "icon": "/common/destiny2_content/icons/unranked.png"},
+					{"stepName": "Copper III", "progressTotal": 300, "icon": "/common/destiny2_content/icons/copper3.png"}
+				]
+			}
+		}
+	}`
+	var manifest Manifest
+	if err := json.Unmarshal([]byte(rawManifest), &manifest); err != nil {
+		t.Fatalf("failed to unmarshal manifest JSON: %v", err)
+	}
+
+	progDef, ok := manifest.ProgressionDefinition["3696598664"]
+	if !ok {
+		t.Fatalf("expected progression 3696598664 in manifest")
+	}
+	if progDef.Hash != 3696598664 || progDef.Index != 42 || progDef.Redacted || progDef.Blacklisted {
+		t.Fatalf("progDef metadata = %+v, want hash=3696598664, index=42, redacted=false, blacklisted=false", progDef)
+	}
+	if progDef.DisplayProperties.Name != "Competitive Division" || !progDef.DisplayProperties.HasIcon {
+		t.Fatalf("progDef.DisplayProperties = %+v, want Competitive Division with icon", progDef.DisplayProperties)
+	}
+	if len(progDef.Steps) != 2 || progDef.Steps[1].StepName != "Copper III" || progDef.Steps[1].ProgressTotal != 300 {
+		t.Fatalf("progDef.Steps = %+v, want 2 steps with Copper III (300)", progDef.Steps)
+	}
+
+	var output bytes.Buffer
+	ctx := testLoggingContext(&output)
+	migrated, err := performMigration(ctx, nil, manifest, 14, true)
+	if err != nil {
+		t.Fatalf("performMigration(index=14, dryRun=true) error = %v", err)
+	}
+	if migrated != 1 {
+		t.Errorf("performMigration(index=14, dryRun=true) migrated = %d, want 1", migrated)
+	}
+}
+
+
