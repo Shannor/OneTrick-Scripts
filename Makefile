@@ -17,7 +17,9 @@ SERVER_TICK_TIMEOUT      := 5m
 SERVER_TICK_MEMORY       := 1Gi
 SERVER_TICK_CPU          := 1
 SERVER_TICK_RETRIES      := 2
-SERVER_TICK_SECRETS      := D2_API_KEY=D2_API_KEY:latest
+ONE_TRICK_API_URL        ?= https://api.d2onetrick.com
+SERVER_TICK_ENV_VARS     := ONE_TRICK_API_URL=$(ONE_TRICK_API_URL)
+SERVER_TICK_SECRETS      := D2_API_KEY=D2_API_KEY:latest,INTERNAL_API_KEY=INTERNAL_API_KEY:latest
 
 # Migration specific variables (assuming similar configuration)
 MIGRATION_NAME           := migration
@@ -41,6 +43,7 @@ deploy-server-tick:
 		--memory $(SERVER_TICK_MEMORY) \
 		--cpu $(SERVER_TICK_CPU) \
 		--max-retries $(SERVER_TICK_RETRIES) \
+		--set-env-vars $(SERVER_TICK_ENV_VARS) \
 		--set-secrets $(SERVER_TICK_SECRETS) \
 		--region $(REGION) \
 		--project=$(PROJECT_ID)
@@ -67,11 +70,11 @@ deploy-migration:
 
 ## Runs server-tick against local Firestore docker DB.
 run-server-tick-local:
-	cd $(SERVER_TICK_SOURCE) && go run . -use-emulator -emulator-host $(EMULATOR_HOST)
+	cd $(SERVER_TICK_SOURCE) && if [ -f "$(abspath $(SERVER_TICK_ENV_FILE))" ]; then set -a && . "$(abspath $(SERVER_TICK_ENV_FILE))" && set +a; fi && DRY_RUN=0 go run . -use-emulator -emulator-host $(EMULATOR_HOST)
 
 ## Runs server-tick in dry-run mode against local Firestore docker DB.
 run-server-tick-local-dry:
-	cd $(SERVER_TICK_SOURCE) && go run . -use-emulator -emulator-host $(EMULATOR_HOST) -dry-run
+	cd $(SERVER_TICK_SOURCE) && if [ -f "$(abspath $(SERVER_TICK_ENV_FILE))" ]; then set -a && . "$(abspath $(SERVER_TICK_ENV_FILE))" && set +a; fi && go run . -use-emulator -emulator-host $(EMULATOR_HOST) -dry-run
 
 ## Runs server-tick using its local environment file against production Firestore.
 run-server-tick-local-env:

@@ -10,6 +10,7 @@ import (
 	"os"
 	"serverTick/bungie"
 	"strconv"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -20,6 +21,8 @@ type Config struct {
 	taskNum                 int64
 	attemptNum              string
 	DestinyAPIKey           string
+	OneTrickAPIURL          string
+	InternalAPIKey          string
 	SkipSave                bool
 	DryRun                  bool
 	BackfillGameModes       bool
@@ -36,14 +39,18 @@ func configFromEnv() (Config, error) {
 
 	attemptNum := os.Getenv("CLOUD_RUN_TASK_ATTEMPT")
 	apiKey := os.Getenv("D2_API_KEY")
+	oneTrickAPIURL := os.Getenv("ONE_TRICK_API_URL")
+	internalAPIKey := os.Getenv("INTERNAL_API_KEY")
 	skipSave, err := stringToInt(os.Getenv("SKIP_SAVE"))
 	if err != nil {
 		return Config{}, err
 	}
 	config := Config{
-		taskNum:       taskNum,
-		attemptNum:    attemptNum,
-		DestinyAPIKey: apiKey,
+		taskNum:        taskNum,
+		attemptNum:     attemptNum,
+		DestinyAPIKey:  apiKey,
+		OneTrickAPIURL: oneTrickAPIURL,
+		InternalAPIKey: internalAPIKey,
 	}
 	if skipSave == 1 {
 		config.SkipSave = true
@@ -264,6 +271,10 @@ func runServerTick(ctx context.Context) error {
 		return fmt.Errorf("failed to get sessions: %w", err)
 	}
 	totalSessions = len(sessions)
+	var (
+		compFinalizeMu         sync.Mutex
+		compFinalizeSessionIDs []string
+	)
 
 	_ = clog.LoopRollup(ctx, "sessionService.processSession", sessions, func(iterCtx context.Context, _ int, session Session) error {
 		defer func() {
@@ -317,6 +328,11 @@ func runServerTick(ctx context.Context) error {
 					sessionsStaleDeleted++
 				} else {
 					sessionsStaleEnded++
+					if ShouldFinalizeComp(session) {
+						compFinalizeMu.Lock()
+						compFinalizeSessionIDs = append(compFinalizeSessionIDs, session.ID)
+						compFinalizeMu.Unlock()
+					}
 				}
 			} else {
 				err := EndOrDeleteSession(iterCtx, db, session)
@@ -329,6 +345,11 @@ func runServerTick(ctx context.Context) error {
 					sessionsStaleDeleted++
 				} else {
 					sessionsStaleEnded++
+					if ShouldFinalizeComp(session) {
+						compFinalizeMu.Lock()
+						compFinalizeSessionIDs = append(compFinalizeSessionIDs, session.ID)
+						compFinalizeMu.Unlock()
+					}
 				}
 			}
 			return nil
@@ -488,6 +509,10 @@ func runServerTick(ctx context.Context) error {
 		aggregatesAddedTotal += len(aggIDs)
 		return errors.Join(postErrs...)
 	})
+
+	if err := FinalizeCompSessions(ctx, &hc, config.OneTrickAPIURL, config.InternalAPIKey, compFinalizeSessionIDs, config.DryRun); err != nil {
+		errorsTotal++
+	}
 
 	cleaned, err := CleanupEmptyCompletedSessions(ctx, db, config.DryRun)
 	emptySessionsCleaned = cleaned

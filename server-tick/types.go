@@ -654,10 +654,16 @@ type SessionSummary struct {
 	TopWeapons   []SessionWeaponSummary `json:"topWeapons" firestore:"topWeapons"`
 }
 
+type CompTracking struct {
+	Enabled bool `firestore:"enabled" json:"enabled"`
+	End     any  `firestore:"end,omitempty" json:"end,omitempty"`
+}
+
 type Session struct {
 	// AggregateIDs List of aggregates linked to this session
 	AggregateIDs       []string        `firestore:"aggregateIds" json:"aggregateIds"`
 	CharacterID        string          `firestore:"characterId" json:"characterId"`
+	CompTracking       *CompTracking   `firestore:"compTracking,omitempty" json:"compTracking,omitempty"`
 	CompletedAt        *time.Time      `firestore:"completedAt" json:"completedAt,omitempty"`
 	CompletedBy        *AuditField     `firestore:"completedBy" json:"completedBy,omitempty"`
 	ID                 string          `firestore:"id" json:"id"`
