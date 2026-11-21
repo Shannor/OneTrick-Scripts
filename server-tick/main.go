@@ -275,6 +275,13 @@ func runServerTick(ctx context.Context) error {
 		compFinalizeMu         sync.Mutex
 		compFinalizeSessionIDs []string
 	)
+	queueCompFinalize := func(s Session) {
+		if ShouldFinalizeComp(s) {
+			compFinalizeMu.Lock()
+			compFinalizeSessionIDs = append(compFinalizeSessionIDs, s.ID)
+			compFinalizeMu.Unlock()
+		}
+	}
 
 	_ = clog.LoopRollup(ctx, "sessionService.processSession", sessions, func(iterCtx context.Context, _ int, session Session) error {
 		defer func() {
@@ -288,6 +295,11 @@ func runServerTick(ctx context.Context) error {
 			"characterId": session.CharacterID,
 		})
 		isCompleted := session.Status != nil && *session.Status == SessionComplete
+		if isCompleted {
+			defer func() {
+				queueCompFinalize(session)
+			}()
+		}
 
 		membershipType, membershipID, err := GetMembershipType(iterCtx, db, session.UserID)
 		if err != nil {
@@ -328,11 +340,7 @@ func runServerTick(ctx context.Context) error {
 					sessionsStaleDeleted++
 				} else {
 					sessionsStaleEnded++
-					if ShouldFinalizeComp(session) {
-						compFinalizeMu.Lock()
-						compFinalizeSessionIDs = append(compFinalizeSessionIDs, session.ID)
-						compFinalizeMu.Unlock()
-					}
+					queueCompFinalize(session)
 				}
 			} else {
 				err := EndOrDeleteSession(iterCtx, db, session)
@@ -345,11 +353,7 @@ func runServerTick(ctx context.Context) error {
 					sessionsStaleDeleted++
 				} else {
 					sessionsStaleEnded++
-					if ShouldFinalizeComp(session) {
-						compFinalizeMu.Lock()
-						compFinalizeSessionIDs = append(compFinalizeSessionIDs, session.ID)
-						compFinalizeMu.Unlock()
-					}
+					queueCompFinalize(session)
 				}
 			}
 			return nil
@@ -471,6 +475,7 @@ func runServerTick(ctx context.Context) error {
 		}
 
 		if config.DryRun {
+			session.AggregateIDs = append(session.AggregateIDs, aggIDs...)
 			sessionsProcessed++
 			aggregatesAddedTotal += len(aggIDs)
 			return nil

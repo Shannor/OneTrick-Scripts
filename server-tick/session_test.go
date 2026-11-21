@@ -363,6 +363,70 @@ func TestFinalizeCompSessionsHTTPCallbackAndDryRun(t *testing.T) {
 			t.Errorf("expected error string in backendClient.finalizeComp, got %v", finalizeComp)
 		}
 	})
+
+	t.Run("200 OK with partial failures returns error and logs warning and error in telemetry", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"updated":1,"skipped":1,"failed":1}`))
+		}))
+		defer srv.Close()
+
+		var output bytes.Buffer
+		ctx := testLoggingContext(&output)
+
+		var callbackErr error
+		_ = clog.Run(ctx, "server-tick", func(ctx context.Context) error {
+			callbackErr = FinalizeCompSessions(ctx, srv.Client(), srv.URL, "secret-key", []string{"s1", "s2", "s3"}, false)
+			return nil
+		})
+		if callbackErr == nil {
+			t.Fatal("FinalizeCompSessions() error = nil, want error when failed > 0")
+		}
+
+		event := decodeEvent(t, &output)
+		if event["severity"] != "WARNING" {
+			t.Errorf("event severity = %v, want WARNING on partial failure", event["severity"])
+		}
+		finalizeComp := event["backendClient"].(map[string]any)["finalizeComp"].(map[string]any)
+		if finalizeComp["statusCode"] != float64(http.StatusOK) ||
+			finalizeComp["updated"] != float64(1) ||
+			finalizeComp["skipped"] != float64(1) ||
+			finalizeComp["failed"] != float64(1) {
+			t.Errorf("backendClient.finalizeComp = %v, want statusCode=200, updated=1, skipped=1, failed=1", finalizeComp)
+		}
+		if _, hasErr := finalizeComp["error"].(string); !hasErr {
+			t.Errorf("expected error string in backendClient.finalizeComp, got %v", finalizeComp)
+		}
+		warning, ok := finalizeComp["warning"].(map[string]any)
+		if !ok || warning["type"] != "finalize_comp_partial_failure" || warning["failed"] != float64(1) {
+			t.Errorf("warning = %v, want type=finalize_comp_partial_failure and failed=1", finalizeComp["warning"])
+		}
+	})
+}
+
+func TestIsStaleSessionAndIsInactiveSessionUseTwoHourCutOff(t *testing.T) {
+	if CutOffDuration != 2*time.Hour {
+		t.Fatalf("CutOffDuration = %v, want 2h", CutOffDuration)
+	}
+
+	now := time.Now()
+	ninetyMinsAgo := now.Add(-90 * time.Minute)
+	twoHoursFiveMinsAgo := now.Add(-(2*time.Hour + 5*time.Minute))
+
+	if IsStaleSession(Session{LastSeenTimestamp: &ninetyMinsAgo}) {
+		t.Error("IsStaleSession(90m ago) = true, want false with 2h grace period")
+	}
+	if !IsStaleSession(Session{LastSeenTimestamp: &twoHoursFiveMinsAgo}) {
+		t.Error("IsStaleSession(2h5m ago) = false, want true with 2h grace period")
+	}
+
+	if IsInactiveSession(Session{StartedAt: ninetyMinsAgo}) {
+		t.Error("IsInactiveSession(90m ago) = true, want false with 2h grace period")
+	}
+	if !IsInactiveSession(Session{StartedAt: twoHoursFiveMinsAgo}) {
+		t.Error("IsInactiveSession(2h5m ago) = false, want true with 2h grace period")
+	}
 }
 
 func TestConfigFromEnvReadsOneTrickAPIURLAndInternalAPIKey(t *testing.T) {

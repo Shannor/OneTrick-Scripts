@@ -18,7 +18,7 @@ import (
 const (
 	SessionCollection = "sessions"
 	// CutOffDuration is when we will automatically complete a session if no activity seen in the time span
-	CutOffDuration      = 1 * time.Hour
+	CutOffDuration      = 2 * time.Hour
 	finalizeCompTimeout = 15 * time.Second
 )
 
@@ -338,6 +338,7 @@ func FinalizeCompSessions(ctx context.Context, httpClient *http.Client, baseURL,
 		"statusCode":   resp.StatusCode,
 		"durationMs":   time.Since(start).Milliseconds(),
 	}
+	var partialFailCount int
 	if len(bytes.TrimSpace(respBody)) > 0 {
 		var parsed finalizeCompResponse
 		if json.Unmarshal(respBody, &parsed) == nil {
@@ -349,6 +350,7 @@ func FinalizeCompSessions(ctx context.Context, httpClient *http.Client, baseURL,
 			}
 			if parsed.Failed != nil {
 				fields["failed"] = *parsed.Failed
+				partialFailCount = *parsed.Failed
 			}
 		}
 	}
@@ -356,6 +358,18 @@ func FinalizeCompSessions(ctx context.Context, httpClient *http.Client, baseURL,
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		err := fmt.Errorf("finalize-comp endpoint returned status %d", resp.StatusCode)
 		fields["error"] = err.Error()
+		clog.WithGroupFields(ctx, "backendClient.finalizeComp", fields)
+		return err
+	}
+
+	if partialFailCount > 0 {
+		err := fmt.Errorf("finalize-comp reported %d failed session(s)", partialFailCount)
+		fields["error"] = err.Error()
+		fields["warning"] = clog.Fields{
+			"type":         "finalize_comp_partial_failure",
+			"failed":       partialFailCount,
+			"sessionCount": len(sessionIDs),
+		}
 		clog.WithGroupFields(ctx, "backendClient.finalizeComp", fields)
 		return err
 	}
