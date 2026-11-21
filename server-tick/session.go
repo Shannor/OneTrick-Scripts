@@ -1,8 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -12,8 +18,17 @@ import (
 const (
 	SessionCollection = "sessions"
 	// CutOffDuration is when we will automatically complete a session if no activity seen in the time span
-	CutOffDuration = 1 * time.Hour
+	CutOffDuration      = 1 * time.Hour
+	finalizeCompTimeout = 15 * time.Second
 )
+
+func ShouldFinalizeComp(s Session) bool {
+	return len(s.AggregateIDs) > 0 &&
+		s.CompTracking != nil &&
+		s.CompTracking.Enabled &&
+		s.CompTracking.End == nil &&
+		s.ID != ""
+}
 
 func IsStaleSession(s Session) bool {
 	now := time.Now()
@@ -180,22 +195,7 @@ func EndOrDeleteSession(ctx context.Context, db *firestore.Client, s Session) er
 	return EndSession(ctx, db, s)
 }
 
-func EndSession(ctx context.Context, db *firestore.Client, s Session) error {
-	start := time.Now()
-	completedBy := AuditField{
-		ID:       "system",
-		Username: "system",
-	}
-	now := time.Now()
-
-	summary, err := ComputeSessionSummary(ctx, db, s)
-	if err != nil {
-		clog.WithGroupField(ctx, "sessionService.endSession", "warning", clog.Fields{
-			"type":      "ended_session_summary",
-			"sessionId": s.ID,
-		})
-	}
-
+func buildEndSessionUpdates(completedBy AuditField, now time.Time, summary *SessionSummary) []firestore.Update {
 	updates := []firestore.Update{
 		{
 			Path:  "completedBy",
@@ -220,6 +220,26 @@ func EndSession(ctx context.Context, db *firestore.Client, s Session) error {
 			Value: summary,
 		})
 	}
+	return updates
+}
+
+func EndSession(ctx context.Context, db *firestore.Client, s Session) error {
+	start := time.Now()
+	completedBy := AuditField{
+		ID:       "system",
+		Username: "system",
+	}
+	now := time.Now()
+
+	summary, err := ComputeSessionSummary(ctx, db, s)
+	if err != nil {
+		clog.WithGroupField(ctx, "sessionService.endSession", "warning", clog.Fields{
+			"type":      "ended_session_summary",
+			"sessionId": s.ID,
+		})
+	}
+
+	updates := buildEndSessionUpdates(completedBy, now, summary)
 
 	_, err = db.Collection(SessionCollection).Doc(s.ID).Update(ctx, updates)
 	clog.WithGroupFields(ctx, "db.endSession", clog.Fields{
@@ -230,6 +250,117 @@ func EndSession(ctx context.Context, db *firestore.Client, s Session) error {
 	if err != nil {
 		return fmt.Errorf("failed to end session: %w", err)
 	}
+	return nil
+}
+
+type finalizeCompRequest struct {
+	SessionIDs []string `json:"sessionIds"`
+}
+
+type finalizeCompResponse struct {
+	Updated *int `json:"updated,omitempty"`
+	Skipped *int `json:"skipped,omitempty"`
+	Failed  *int `json:"failed,omitempty"`
+}
+
+func FinalizeCompSessions(ctx context.Context, httpClient *http.Client, baseURL, apiKey string, sessionIDs []string, dryRun bool) error {
+	if len(sessionIDs) == 0 {
+		return nil
+	}
+	if dryRun {
+		clog.WithGroupFields(ctx, "backendClient.finalizeComp", clog.Fields{
+			"sessionCount": len(sessionIDs),
+			"dryRun":       true,
+		})
+		return nil
+	}
+
+	start := time.Now()
+	trimmedBaseURL := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if trimmedBaseURL == "" {
+		err := errors.New("ONE_TRICK_API_URL is not configured")
+		clog.WithGroupFields(ctx, "backendClient.finalizeComp", clog.Fields{
+			"sessionCount": len(sessionIDs),
+			"durationMs":   time.Since(start).Milliseconds(),
+			"error":        err.Error(),
+		})
+		return err
+	}
+
+	bodyBytes, err := json.Marshal(finalizeCompRequest{SessionIDs: sessionIDs})
+	if err != nil {
+		clog.WithGroupFields(ctx, "backendClient.finalizeComp", clog.Fields{
+			"sessionCount": len(sessionIDs),
+			"durationMs":   time.Since(start).Milliseconds(),
+			"error":        err.Error(),
+		})
+		return fmt.Errorf("failed to marshal finalize-comp request: %w", err)
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, finalizeCompTimeout)
+	defer cancel()
+
+	endpoint := trimmedBaseURL + "/internal/sessions/finalize-comp"
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
+	if err != nil {
+		clog.WithGroupFields(ctx, "backendClient.finalizeComp", clog.Fields{
+			"sessionCount": len(sessionIDs),
+			"durationMs":   time.Since(start).Milliseconds(),
+			"error":        err.Error(),
+		})
+		return fmt.Errorf("failed to create finalize-comp request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "oneTrick-backend")
+	if apiKey != "" {
+		req.Header.Set("X-Internal-API-Key", apiKey)
+	}
+
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: finalizeCompTimeout}
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		clog.WithGroupFields(ctx, "backendClient.finalizeComp", clog.Fields{
+			"sessionCount": len(sessionIDs),
+			"durationMs":   time.Since(start).Milliseconds(),
+			"error":        err.Error(),
+		})
+		return fmt.Errorf("failed to call finalize-comp endpoint: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	fields := clog.Fields{
+		"sessionCount": len(sessionIDs),
+		"statusCode":   resp.StatusCode,
+		"durationMs":   time.Since(start).Milliseconds(),
+	}
+	if len(bytes.TrimSpace(respBody)) > 0 {
+		var parsed finalizeCompResponse
+		if json.Unmarshal(respBody, &parsed) == nil {
+			if parsed.Updated != nil {
+				fields["updated"] = *parsed.Updated
+			}
+			if parsed.Skipped != nil {
+				fields["skipped"] = *parsed.Skipped
+			}
+			if parsed.Failed != nil {
+				fields["failed"] = *parsed.Failed
+			}
+		}
+	}
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		err := fmt.Errorf("finalize-comp endpoint returned status %d", resp.StatusCode)
+		fields["error"] = err.Error()
+		clog.WithGroupFields(ctx, "backendClient.finalizeComp", fields)
+		return err
+	}
+
+	clog.WithGroupFields(ctx, "backendClient.finalizeComp", fields)
 	return nil
 }
 

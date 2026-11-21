@@ -5,6 +5,8 @@
 | Variable                 | Required | Description                                                                                                                                                                                                    |
 |--------------------------|----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `D2_API_KEY`             | Yes      | Bungie API key for Destiny 2 API access                                                                                                                                                                        |
+| `ONE_TRICK_API_URL`      | No       | Base URL of the OneTrick backend API (e.g., `https://api.d2onetrick.com` in prod, `http://localhost:8080` locally) used to finalize Competitive session tracking                                               |
+| `INTERNAL_API_KEY`       | No       | Shared secret sent via `X-Internal-API-Key` header when calling internal backend endpoints                                                                                                                     |
 | `CLOUD_RUN_TASK_INDEX`   | No       | Cloud Run task index (defaults to 0)                                                                                                                                                                           |
 | `CLOUD_RUN_TASK_ATTEMPT` | No       | Cloud Run task attempt identifier                                                                                                                                                                              |
 | `SKIP_SAVE`              | No       | Set to `1` to skip saving loadout snapshots                                                                                                                                                                    |
@@ -59,7 +61,8 @@ gcloud run jobs deploy server-tick \
     --memory 1Gi \
     --cpu 1 \
     --max-retries 2 \
-    --set-secrets D2_API_KEY=D2_API_KEY:latest \
+    --set-env-vars ONE_TRICK_API_URL=https://api.d2onetrick.com \
+    --set-secrets D2_API_KEY=D2_API_KEY:latest,INTERNAL_API_KEY=INTERNAL_API_KEY:latest \
     --region us-central1 \
     --project=gruntt-destiny
 ```
