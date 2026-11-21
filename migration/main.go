@@ -186,10 +186,7 @@ func runMigration(ctx context.Context) error {
 		return nil
 	}
 
-	path := manifestResponse.Response.JsonWorldContentPaths.EN
-	manifestURL := SetBaseUrl(&path)
-
-	manifest, err := downloadManifest(ctx, manifestURL)
+	manifest, err := downloadManifestForTask(ctx, manifestResponse, config.taskNum)
 	if err != nil {
 		errorsTotal++
 		return err
@@ -261,11 +258,126 @@ func requestManifestInformation(ctx context.Context) (*ManifestResponse, error) 
 	return &manifestResponse, nil
 }
 
+func GetManifestComponentByIndex(index int64) (string, bool) {
+	switch index {
+	case 0:
+		return "DestinyInventoryBucketDefinition", true
+	case 1:
+		return "DestinyClassDefinition", true
+	case 2:
+		return "DestinyPlaceDefinition", true
+	case 3:
+		return "DestinyDamageTypeDefinition", true
+	case 4:
+		return "DestinyActivityModeDefinition", true
+	case 5, 12:
+		return "DestinyActivityDefinition", true
+	case 6:
+		return "DestinyItemCategoryDefinition", true
+	case 7:
+		return "DestinyInventoryItemDefinition", true
+	case 8:
+		return "DestinyStatDefinition", true
+	case 9:
+		return "DestinyRaceDefinition", true
+	case 10:
+		return "DestinySandboxPerkDefinition", true
+	case 11:
+		return "DestinyRecordDefinition", true
+	case 13:
+		return "DestinyEquipableItemSetDefinition", true
+	case 14:
+		return "DestinyProgressionDefinition", true
+	default:
+		return "", false
+	}
+}
+
+func manifestComponentTarget(manifest *Manifest, index int64) (any, error) {
+	switch index {
+	case 0:
+		return &manifest.InventoryBucketDefinition, nil
+	case 1:
+		return &manifest.ClassDefinition, nil
+	case 2:
+		return &manifest.PlaceDefinition, nil
+	case 3:
+		return &manifest.DamageTypeDefinition, nil
+	case 4:
+		return &manifest.ActivityModeDefinition, nil
+	case 5, 12:
+		return &manifest.ActivityDefinition, nil
+	case 6:
+		return &manifest.ItemCategoryDefinition, nil
+	case 7:
+		return &manifest.InventoryItemDefinition, nil
+	case 8:
+		return &manifest.StatDefinition, nil
+	case 9:
+		return &manifest.RaceDefinition, nil
+	case 10:
+		return &manifest.SandboxPerkDefinition, nil
+	case 11:
+		return &manifest.RecordDefinition, nil
+	case 13:
+		return &manifest.EquipableItemSetDefinition, nil
+	case 14:
+		return &manifest.ProgressionDefinition, nil
+	default:
+		return nil, fmt.Errorf("unknown manifest component index: %d", index)
+	}
+}
+
+func downloadManifestForTask(ctx context.Context, manifestResponse *ManifestResponse, index int64) (*Manifest, error) {
+	if componentName, ok := GetManifestComponentByIndex(index); ok {
+		if componentPath := manifestResponse.Response.JsonWorldComponentContentPaths["en"][componentName]; componentPath != "" {
+			return downloadManifestComponent(ctx, SetBaseUrl(&componentPath), index, componentName)
+		}
+	}
+
+	path := manifestResponse.Response.JsonWorldContentPaths.EN
+	return downloadManifest(ctx, SetBaseUrl(&path))
+}
+
+func downloadManifestComponent(ctx context.Context, manifestURL string, index int64, componentName string) (*Manifest, error) {
+	var manifest Manifest
+	target, err := manifestComponentTarget(&manifest, index)
+	if err != nil {
+		return nil, err
+	}
+	if err := downloadAndDecodeManifest(ctx, manifestURL, componentName, target); err != nil {
+		return nil, err
+	}
+	return &manifest, nil
+}
+
 func downloadManifest(ctx context.Context, manifestURL string) (*Manifest, error) {
+	var manifest Manifest
+	if err := downloadAndDecodeManifest(ctx, manifestURL, "", &manifest); err != nil {
+		return nil, err
+	}
+	return &manifest, nil
+}
+
+func downloadAndDecodeManifest(ctx context.Context, manifestURL string, componentName string, target any) error {
 	downloadStart := time.Now()
+	logFields := func(statusCode int) clog.Fields {
+		fields := clog.Fields{
+			"url":        manifestURL,
+			"durationMs": time.Since(downloadStart).Milliseconds(),
+		}
+		if componentName != "" {
+			fields["component"] = componentName
+		}
+		if statusCode > 0 {
+			fields["statusCode"] = statusCode
+		}
+		return fields
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create manifest download request: %w", err)
+		return fmt.Errorf("failed to create manifest download request: %w", err)
 	}
 
 	req.Header.Add("Accept", "application/json")
@@ -274,39 +386,23 @@ func downloadManifest(ctx context.Context, manifestURL string) (*Manifest, error
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		clog.WithGroupFields(ctx, "bungieClient.downloadManifest", clog.Fields{
-			"url":        manifestURL,
-			"durationMs": time.Since(downloadStart).Milliseconds(),
-		})
-		return nil, fmt.Errorf("failed to download manifest file: %w", err)
+		clog.WithGroupFields(ctx, "bungieClient.downloadManifest", logFields(0))
+		return fmt.Errorf("failed to download manifest file: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		clog.WithGroupFields(ctx, "bungieClient.downloadManifest", clog.Fields{
-			"url":        manifestURL,
-			"statusCode": resp.StatusCode,
-			"durationMs": time.Since(downloadStart).Milliseconds(),
-		})
-		return nil, fmt.Errorf("bad manifest response status: %s (code: %d)", resp.Status, resp.StatusCode)
+		clog.WithGroupFields(ctx, "bungieClient.downloadManifest", logFields(resp.StatusCode))
+		return fmt.Errorf("bad manifest response status: %s (code: %d)", resp.Status, resp.StatusCode)
 	}
 
-	var manifest Manifest
-	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
-		clog.WithGroupFields(ctx, "bungieClient.downloadManifest", clog.Fields{
-			"url":        manifestURL,
-			"statusCode": resp.StatusCode,
-			"durationMs": time.Since(downloadStart).Milliseconds(),
-		})
-		return nil, fmt.Errorf("failed to decode manifest data: %w", err)
+	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+		clog.WithGroupFields(ctx, "bungieClient.downloadManifest", logFields(resp.StatusCode))
+		return fmt.Errorf("failed to decode manifest data: %w", err)
 	}
 
-	clog.WithGroupFields(ctx, "bungieClient.downloadManifest", clog.Fields{
-		"url":        manifestURL,
-		"statusCode": resp.StatusCode,
-		"durationMs": time.Since(downloadStart).Milliseconds(),
-	})
-	return &manifest, nil
+	clog.WithGroupFields(ctx, "bungieClient.downloadManifest", logFields(resp.StatusCode))
+	return nil
 }
 
 // GetVersionByIndex returns the version string for the given collection index

@@ -21,14 +21,14 @@ ONE_TRICK_API_URL        ?= https://api.d2onetrick.com
 SERVER_TICK_ENV_VARS     := ONE_TRICK_API_URL=$(ONE_TRICK_API_URL)
 SERVER_TICK_SECRETS      := D2_API_KEY=D2_API_KEY:latest,INTERNAL_API_KEY=INTERNAL_API_KEY:latest
 
-# Migration specific variables (assuming similar configuration)
+# Migration specific variables
 MIGRATION_NAME           := migration
 MIGRATION_SOURCE         := ./migration
 MIGRATION_TASKS          := 15
-MIGRATION_TIMEOUT        := 10m
-MIGRATION_MEMORY         := 1Gi
+MIGRATION_TIMEOUT        := 30m
+MIGRATION_MEMORY         := 2Gi
 MIGRATION_CPU            := 1
-MIGRATION_RETRIES        := 2
+MIGRATION_RETRIES        := 3
 
 # ====================================================================================
 # Targets

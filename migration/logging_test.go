@@ -7,7 +7,10 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -423,4 +426,136 @@ func TestProgressionDefinitionMigrationAndManifestDecoding(t *testing.T) {
 	}
 }
 
+func TestBuildCrucibleMapsMergesActivityModesWithoutCorruptingHashes(t *testing.T) {
+	items := map[string]ActivityDefinition{
+		"1001": {
+			Hash: 1001,
+			DisplayProperties: ActivityDisplayProperties{
+				Name:    "Javelin-4",
+				HasIcon: false,
+			},
+			IsPvP:              true,
+			IsPlaylist:         false,
+			ActivityModeHashes: []int{2001},
+			ActivityModeTypes:  []int{10},
+		},
+		"1002": {
+			Hash: 1002,
+			DisplayProperties: ActivityDisplayProperties{
+				Name:    "Javelin-4",
+				Icon:    "/icons/javelin4.png",
+				HasIcon: true,
+			},
+			IsPvP:              true,
+			IsPlaylist:         false,
+			ActivityModeHashes: []int{2002, 2003},
+			ActivityModeTypes:  []int{19, 84},
+		},
+		"1003": {
+			Hash: 1003,
+			DisplayProperties: ActivityDisplayProperties{
+				Name: "Control: Javelin-4",
+			},
+			IsPvP:      true,
+			IsPlaylist: false,
+		},
+		"1004": {
+			Hash: 1004,
+			DisplayProperties: ActivityDisplayProperties{
+				Name: "Quickplay",
+			},
+			IsPvP:      true,
+			IsPlaylist: true,
+		},
+	}
 
+	rawMaps, err := BuildCrucibleMaps(items)
+	if err != nil {
+		t.Fatalf("BuildCrucibleMaps() error = %v", err)
+	}
+	maps, ok := rawMaps.(map[string]CrucibleMap)
+	if !ok {
+		t.Fatalf("BuildCrucibleMaps() returned %T, want map[string]CrucibleMap", rawMaps)
+	}
+	if len(maps) != 1 {
+		t.Fatalf("len(maps) = %d, want 1", len(maps))
+	}
+
+	got, ok := maps["javelin-4"]
+	if !ok {
+		t.Fatalf("missing javelin-4 entry in %+v", maps)
+	}
+	slices.Sort(got.Hashes)
+	slices.Sort(got.ActivityModeHashes)
+	slices.Sort(got.ActivityModeTypes)
+
+	if !slices.Equal(got.Hashes, []int{1001, 1002}) {
+		t.Errorf("Hashes = %v, want [1001 1002]", got.Hashes)
+	}
+	if !slices.Equal(got.ActivityModeHashes, []int{2001, 2002, 2003}) {
+		t.Errorf("ActivityModeHashes = %v, want [2001 2002 2003]", got.ActivityModeHashes)
+	}
+	if !slices.Equal(got.ActivityModeTypes, []int{10, 19, 84}) {
+		t.Errorf("ActivityModeTypes = %v, want [10 19 84]", got.ActivityModeTypes)
+	}
+	if !got.DisplayProperties.HasIcon || got.DisplayProperties.Icon != "/icons/javelin4.png" {
+		t.Errorf("DisplayProperties = %+v, want icon /icons/javelin4.png", got.DisplayProperties)
+	}
+}
+
+func TestGetManifestComponentByIndexAndComponentDownload(t *testing.T) {
+	for i := int64(0); i <= 14; i++ {
+		component, ok := GetManifestComponentByIndex(i)
+		if !ok || component == "" {
+			t.Fatalf("GetManifestComponentByIndex(%d) = (%q, %v), want non-empty component", i, component, ok)
+		}
+		var manifest Manifest
+		if _, err := manifestComponentTarget(&manifest, i); err != nil {
+			t.Fatalf("manifestComponentTarget(index=%d) error = %v", i, err)
+		}
+	}
+	if component, ok := GetManifestComponentByIndex(15); ok || component != "" {
+		t.Fatalf("GetManifestComponentByIndex(15) = (%q, %v), want (\"\", false)", component, ok)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"1001": {
+				"hash": 1001,
+				"displayProperties": {"name": "Burnout", "hasIcon": true, "icon": "/icons/burnout.png"},
+				"isPvP": true,
+				"isPlaylist": false,
+				"activityModeHashes": [1164760493],
+				"activityModeTypes": [5]
+			}
+		}`))
+	}))
+	defer srv.Close()
+
+	var output bytes.Buffer
+	ctx := testLoggingContext(&output)
+	var manifest *Manifest
+	err := clog.Run(ctx, "migration", func(ctx context.Context) error {
+		var dlErr error
+		manifest, dlErr = downloadManifestComponent(ctx, srv.URL, 12, "DestinyActivityDefinition")
+		return dlErr
+	})
+	if err != nil {
+		t.Fatalf("downloadManifestComponent() error = %v", err)
+	}
+	activity, ok := manifest.ActivityDefinition["1001"]
+	if !ok || activity.DisplayProperties.Name != "Burnout" {
+		t.Fatalf("manifest.ActivityDefinition = %+v, want Burnout", manifest.ActivityDefinition)
+	}
+
+	event := decodeEvent(t, &output)
+	bungieClient, ok := event["bungieClient"].(map[string]any)
+	if !ok {
+		t.Fatalf("bungieClient group missing in %v", event)
+	}
+	download, ok := bungieClient["downloadManifest"].(map[string]any)
+	if !ok || download["component"] != "DestinyActivityDefinition" || download["statusCode"] != float64(http.StatusOK) {
+		t.Fatalf("bungieClient.downloadManifest = %v, want component DestinyActivityDefinition and statusCode 200", download)
+	}
+}

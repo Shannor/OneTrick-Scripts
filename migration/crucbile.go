@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 )
 
@@ -16,8 +17,8 @@ func BuildCrucibleMaps(items map[string]ActivityDefinition) (any, error) {
 			existing, ok := maps[name]
 			if ok {
 				existing.Hashes = append(existing.Hashes, definition.Hash)
-				existing.ActivityModeHashes = append(existing.Hashes, definition.ActivityModeHashes...)
-				existing.ActivityModeTypes = append(existing.Hashes, definition.ActivityModeTypes...)
+				existing.ActivityModeHashes = append(existing.ActivityModeHashes, definition.ActivityModeHashes...)
+				existing.ActivityModeTypes = append(existing.ActivityModeTypes, definition.ActivityModeTypes...)
 				if !existing.DisplayProperties.HasIcon {
 					existing.DisplayProperties.Icon = definition.DisplayProperties.Icon
 					existing.DisplayProperties.HasIcon = definition.DisplayProperties.HasIcon
@@ -28,8 +29,8 @@ func BuildCrucibleMaps(items map[string]ActivityDefinition) (any, error) {
 					DisplayProperties:  definition.DisplayProperties,
 					Key:                name,
 					Hashes:             []int{definition.Hash},
-					ActivityModeHashes: definition.ActivityModeHashes,
-					ActivityModeTypes:  definition.ActivityModeTypes,
+					ActivityModeHashes: slices.Clone(definition.ActivityModeHashes),
+					ActivityModeTypes:  slices.Clone(definition.ActivityModeTypes),
 				}
 			}
 		}
